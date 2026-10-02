@@ -1,5 +1,5 @@
 // File: script.js
-// Admin Panel - Full Updated Script with Half Day Attendance Feature
+// Admin Panel - Full Updated Script with Coin System + Dual-Account Deposits
 
 // ================================================================
 // FIREBASE CONFIG
@@ -44,9 +44,47 @@ const getVal = (id) => {
   return el ? el.value : '';
 };
 
+// ================================================================
+// 🪙 COIN SYSTEM (replaces commission entirely)
+// ================================================================
+const COIN_VALUE = 12.50;
+
+function getCoins(item) {
+  if (!item) return 0;
+  const c = item.coins;
+  if (c === undefined || c === null) return 0;
+  const n = Number(c);
+  return isNaN(n) ? 0 : n;
+}
+
+function getCoinRate(item) {
+  if (item && item.coinValueRate !== undefined && item.coinValueRate !== null) {
+    const n = Number(item.coinValueRate);
+    if (!isNaN(n) && n > 0) return n;
+  }
+  return COIN_VALUE;
+}
+
+function getCoinTotalValue(item) {
+  if (!item) return 0;
+  if (item.coinTotalValue !== undefined && item.coinTotalValue !== null) {
+    const n = Number(item.coinTotalValue);
+    if (!isNaN(n)) return n;
+  }
+  return getCoins(item) * getCoinRate(item);
+}
+
+function getActualPurchaseCost(item) {
+  if (!item) return 0;
+  if (item.actualTotalCost !== undefined && item.actualTotalCost !== null) {
+    const n = Number(item.actualTotalCost);
+    if (!isNaN(n)) return n;
+  }
+  return (Number(item.value) || 0) + getCoinTotalValue(item);
+}
 
 // ================================================================
-// CASIFY ENHANCED SMART SEARCH ENGINE
+// CASHIFY ENHANCED SMART SEARCH ENGINE
 // ================================================================
 function normalizeSearchText(str) {
   if (!str) return '';
@@ -65,7 +103,6 @@ function advancedSmartFilter(items, query, fields = ['orderId', 'phoneModel', 'i
   const qTokens = normQ.split(' ').filter(Boolean);
   const digitQ = cleanDigits(rawQ);
 
-  // 1. Try Fuse.js with enhanced fuzzy & weighting if available
   let fuseMatches = null;
   if (window.Fuse) {
     try {
@@ -89,9 +126,7 @@ function advancedSmartFilter(items, query, fields = ['orderId', 'phoneModel', 'i
     }
   }
 
-  // 2. Token-based multi-keyword & partial match filter
   const tokenMatches = items.filter(item => {
-    // Exact or partial numeric match for IMEI, OrderID, Phone
     if (digitQ.length >= 3) {
       const itemImeiDigits = cleanDigits(item.imei || '');
       const itemOrderDigits = cleanDigits(item.orderId || '');
@@ -101,13 +136,10 @@ function advancedSmartFilter(items, query, fields = ['orderId', 'phoneModel', 'i
       }
     }
 
-    // Build combined searchable string
     const combined = fields.map(f => item[f] ? normalizeSearchText(item[f]) : '').join(' ');
-    // Every search token must match somewhere in the fields
     return qTokens.every(tok => combined.includes(tok));
   });
 
-  // Combine results with prioritized order (token matches first, then fuzzy matches)
   const seen = new Set();
   const merged = [];
   
@@ -169,8 +201,6 @@ function debounce(fn, delay = 250) {
 function isAfter12Local(ts) {
   const d = new Date(ts);
   if (isNaN(d)) return false;
-
-  // 12:00:00 ke baad wala time half day trigger karega
   return d.getHours() > 12 || (d.getHours() === 12 && (d.getMinutes() > 0 || d.getSeconds() > 0));
 }
 
@@ -239,9 +269,7 @@ function invalidate(...nodes) {
 
 async function getData(node, force = false) {
   const isFresh = cache[node] && (Date.now() - cacheTime[node] < CACHE_TTL);
-
   if (!force && isFresh) return cache[node];
-
   const snap = await db.ref(node).once('value');
   cache[node] = snap.val() || {};
   cacheTime[node] = Date.now();
@@ -286,13 +314,10 @@ function buildOptionList(options, current) {
 
 function getDocImages(item, which) {
   if (!item) return [];
-
   const arrField = which === 'bill' ? 'billImages' : 'aadhaarImages';
   const legacy = which === 'bill' ? 'billImage' : 'aadhaarImage';
-
   const arr = Array.isArray(item[arrField]) ? item[arrField].slice() : [];
   if (!arr.length && item[legacy]) arr.push(item[legacy]);
-
   return arr.filter(Boolean);
 }
 
@@ -356,7 +381,6 @@ async function _uploadImageToStorageAdmin(file, orderId, docType, index) {
 
 async function _deleteImageFromStorageAdmin(url) {
   if (!url) return;
-
   try {
     const ref = storage.refFromURL(url);
     await ref.delete();
@@ -383,14 +407,14 @@ function openImageViewer(src, title) {
     const modal = $('imgViewerModal');
     if (!modal) return;
 
-    let img = $('imgViewerImage');
+    let img = $('imgViewerImg');
     let caption = $('imgViewerCaption');
 
     if (!img) {
       modal.innerHTML = `
         <div style="position:relative; max-width:90vw; max-height:90vh; background:#000; border-radius:12px; padding:10px;">
           <button onclick="closeImageViewer()" style="position:absolute; top:10px; right:10px; z-index:20; background:#dc2626; color:white; border:none; border-radius:8px; padding:8px 12px;">Close</button>
-          <img id="imgViewerImage" src="${src}" style="max-width:100%; max-height:85vh; display:block; margin:0 auto;" alt="Document">
+          <img id="imgViewerImg" src="${src}" style="max-width:100%; max-height:85vh; display:block; margin:0 auto;" alt="Document">
           <div id="imgViewerCaption" style="color:white; text-align:center; margin-top:8px;">${title || ''}</div>
         </div>
       `;
@@ -601,30 +625,6 @@ async function adminSaveDocNumber(which) {
 }
 
 // ================================================================
-// COMMISSION
-// ================================================================
-const COMMISSION_BRACKETS = [
-  { min: 0, max: 10000, type: 'percentage', value: 10 },
-  { min: 10001, max: 31000, type: 'percentage', value: 8 },
-  { min: 31001, max: Infinity, type: 'fixed', value: 2500 }
-];
-
-function calculateCommission(purchasePrice) {
-  if (!purchasePrice || purchasePrice <= 0) return 0;
-
-  for (const bracket of COMMISSION_BRACKETS) {
-    if (purchasePrice >= bracket.min && purchasePrice <= bracket.max) {
-      if (bracket.type === 'percentage') {
-        return Math.round((purchasePrice * bracket.value) / 100);
-      }
-      return bracket.value;
-    }
-  }
-
-  return 0;
-}
-
-// ================================================================
 // STATE
 // ================================================================
 let allOrders = [];
@@ -654,6 +654,7 @@ let allDeposits = [];
 let filteredDeposits = [];
 let depositCurrentPage = 1;
 const depositPageSize = 15;
+let depositAccountFilter = 'all';   // 🆕 dual-account filter state
 
 let currentSalaryMode = 'today';
 let currentSalaryPeriod = null;
@@ -749,28 +750,30 @@ async function loadDashboard(force = false) {
     let unsoldCount = 0;
     let revenue = 0;
     let profit = 0;
-    let totalCommission = 0;
+    let totalCoinsValue = 0;
     let totalStockValue = 0;
 
     Object.values(pickups).forEach(item => {
       total++;
       if (item.status === 'on_hold') return;
 
-      const commission = item.commission !== undefined ? item.commission : calculateCommission(item.value || 0);
-      totalCommission += commission;
+      const coinsValue = getCoinTotalValue(item);
+      totalCoinsValue += coinsValue;
 
       if (item.status === 'pickup') {
         pickupCount++;
 
         if (item.sold) {
           soldCount++;
-          const netRevenue = (item.salePrice || 0) - commission;
+          const netRevenue = (item.salePrice || 0);
           revenue += netRevenue;
-          const itemProfit = item.profit !== undefined ? item.profit : (netRevenue - (item.value || 0));
+
+          const actualCost = getActualPurchaseCost(item);
+          const itemProfit = (item.salePrice || 0) - actualCost;
           profit += itemProfit;
         } else {
           unsoldCount++;
-          totalStockValue += item.value || 0;
+          totalStockValue += getActualPurchaseCost(item);
         }
       } else if (item.status === 'rejected') {
         rejectedCount++;
@@ -795,12 +798,16 @@ async function loadDashboard(force = false) {
       }
     }
 
-    let depositTotalAmount = 0;
+    // Total overhead from wallet deposits only (commission deposits are coins, not cash overhead)
+    let walletOverhead = 0;
     Object.values(deposits).forEach(d => {
-      depositTotalAmount += d.amount || 0;
+      const account = d.account || 'wallet';
+      if (account === 'wallet') {
+        walletOverhead += d.amount || 0;
+      }
     });
 
-    const totalOverhead = depositTotalAmount;
+    const totalOverhead = walletOverhead;
     const dashOverheadPerPhone = soldCount > 0 ? totalOverhead / soldCount : 0;
     const finalNetProfit = profit - (dashOverheadPerPhone * soldCount);
 
@@ -816,7 +823,10 @@ async function loadDashboard(force = false) {
     setText('statStockValue', formatINR(totalStockValue));
     setText('statAgents', totalAgents);
     setText('statPresentToday', presentToday);
-    setText('statCommission', formatINR(totalCommission));
+    setText('statCommission', formatINR(totalCoinsValue));
+
+    const commLabel = document.querySelector('#statCommission')?.parentElement?.querySelector('.text-xs');
+    if (commLabel) commLabel.textContent = 'Total Coins Value';
 
     setText('orderCountBadge', total);
     setText('pendingBadge', pendingCount);
@@ -1367,7 +1377,8 @@ function renderInventoryTable() {
   let html = '';
 
   filteredInventory.forEach((item, idx) => {
-    const commission = calculateCommission(item.value || 0);
+    const coinsQty = getCoins(item);
+    const coinValue = getCoinTotalValue(item);
 
     html += `
       <tr class="order-row border-b border-gray-50">
@@ -1376,7 +1387,12 @@ function renderInventoryTable() {
         <td class="py-3 px-4 text-gray-600 text-sm">${item.phoneModel || '—'}</td>
         <td class="py-3 px-4 hidden md:table-cell font-mono text-xs text-gray-500">${item.imei || '—'}</td>
         <td class="py-3 px-4 font-bold text-gray-700">${formatINR(item.value || 0)}</td>
-        <td class="py-3 px-4"><span class="commission-col">${formatINR(commission)}</span></td>
+        <td class="py-3 px-4">
+          <span class="commission-col">
+            ${coinsQty} 🪙
+            ${coinsQty > 0 ? `<br><span class="text-[10px] text-gray-500 font-normal">${formatINR(coinValue)}</span>` : ''}
+          </span>
+        </td>
         <td class="py-3 px-4 hidden lg:table-cell text-gray-600 text-sm">${item.customerName || '—'}</td>
         <td class="py-3 px-4">
           <button onclick="openSellModal('${item.id}')" class="btn-action sell"><i data-lucide="badge-dollar-sign"></i> Sell</button>
@@ -1436,12 +1452,9 @@ async function loadSales(force = false) {
 
           if (isPresent && salaryCounted) {
             let dayAmount = perDaySalary;
-
-            // HALF DAY: 12 baje ke baad admin ne Half Day select kiya hai to 50% salary
             if (att.half_day === true) {
               dayAmount = perDaySalary * 0.5;
             }
-
             agentBaseSalary += dayAmount;
           }
 
@@ -1485,14 +1498,16 @@ async function loadSales(force = false) {
       .filter(([_, item]) => item.sold === true && item.status !== 'on_hold')
       .map(([id, item]) => {
         const purchase = item.value || 0;
-        const commission = item.commission !== undefined ? item.commission : calculateCommission(purchase);
-        const grossProfit = (item.salePrice || 0) - purchase - commission;
+        const coinsValue = getCoinTotalValue(item);
+        const actualCost = getActualPurchaseCost(item);
+        const grossProfit = (item.salePrice || 0) - actualCost;
         const finalNetProfit = grossProfit - overheadPerPhone;
 
         return {
           id,
           ...item,
-          commission,
+          coinsValue,
+          actualCost,
           grossProfit,
           finalNetProfit
         };
@@ -1549,12 +1564,11 @@ function updateSalesSummary() {
   let finalProfitTotal = 0;
 
   filteredSales.forEach(item => {
-    const purchase = item.value || 0;
-    const c = item.commission !== undefined ? item.commission : calculateCommission(purchase);
+    const actualCost = item.actualCost !== undefined ? item.actualCost : getActualPurchaseCost(item);
 
-    revenue += (item.salePrice || 0) - c;
+    revenue += (item.salePrice || 0);
 
-    const gp = item.grossProfit !== undefined ? item.grossProfit : (item.salePrice - c - purchase);
+    const gp = item.grossProfit !== undefined ? item.grossProfit : ((item.salePrice || 0) - actualCost);
     grossProfitTotal += gp || 0;
 
     const fp = item.finalNetProfit !== undefined ? item.finalNetProfit : (gp - overheadPerPhone);
@@ -1583,8 +1597,10 @@ function renderSalesTable() {
 
   filteredSales.forEach((item, idx) => {
     const purchase = item.value || 0;
-    const commission = item.commission !== undefined ? item.commission : calculateCommission(purchase);
-    const grossProfit = item.grossProfit !== undefined ? item.grossProfit : (item.salePrice - commission - purchase);
+    const coinsQty = getCoins(item);
+    const coinsValue = item.coinsValue !== undefined ? item.coinsValue : getCoinTotalValue(item);
+    const actualCost = item.actualCost !== undefined ? item.actualCost : getActualPurchaseCost(item);
+    const grossProfit = item.grossProfit !== undefined ? item.grossProfit : ((item.salePrice || 0) - actualCost);
     const finalProfit = item.finalNetProfit !== undefined ? item.finalNetProfit : (grossProfit - overheadPerPhone);
     const profitClass = finalProfit >= 0 ? 'profit-green' : 'profit-red';
 
@@ -1596,7 +1612,7 @@ function renderSalesTable() {
         <td class="py-3 px-4 hidden md:table-cell font-mono text-xs text-gray-500">${item.imei || '—'}</td>
         <td class="py-3 px-4 text-gray-600">${formatINR(purchase)}</td>
         <td class="py-3 px-4 font-bold text-gray-800">${formatINR(item.salePrice || 0)}</td>
-        <td class="py-3 px-4"><span class="commission-badge">${formatINR(commission)}</span></td>
+        <td class="py-3 px-4"><span class="commission-badge">${coinsQty} 🪙 <br><span class="text-[10px] font-normal">${formatINR(coinsValue)}</span></span></td>
         <td class="py-3 px-4 font-bold text-indigo-600">${formatINR(grossProfit)}</td>
         <td class="py-3 px-4 text-amber-600 font-semibold">${formatINR(overheadPerPhone)}</td>
         <td class="py-3 px-4 font-bold ${profitClass}">${formatINR(finalProfit)}</td>
@@ -1622,12 +1638,14 @@ function exportSalesCSV() {
     return;
   }
 
-  const headers = ['Order ID', 'Model', 'IMEI', 'Purchase Price', 'Sale Price', 'Commission', 'Gross Profit', 'Overhead/Phone', 'Final Net Profit', 'Buyer', 'Buyer Contact', 'Sale Date', 'Agent'];
+  const headers = ['Order ID', 'Model', 'IMEI', 'Purchase Price', 'Coins Qty', 'Coins Value (₹)', 'Actual Purchase Cost (₹)', 'Sale Price', 'Gross Profit', 'Overhead/Phone', 'Final Net Profit', 'Buyer', 'Buyer Contact', 'Sale Date', 'Agent'];
 
   const rows = filteredSales.map(item => {
     const purchase = item.value || 0;
-    const c = item.commission !== undefined ? item.commission : calculateCommission(purchase);
-    const gp = item.grossProfit !== undefined ? item.grossProfit : (item.salePrice - c - purchase);
+    const coinsQty = getCoins(item);
+    const coinsValue = item.coinsValue !== undefined ? item.coinsValue : getCoinTotalValue(item);
+    const actualCost = item.actualCost !== undefined ? item.actualCost : getActualPurchaseCost(item);
+    const gp = item.grossProfit !== undefined ? item.grossProfit : ((item.salePrice || 0) - actualCost);
     const fp = item.finalNetProfit !== undefined ? item.finalNetProfit : (gp - overheadPerPhone);
 
     return [
@@ -1635,8 +1653,10 @@ function exportSalesCSV() {
       item.phoneModel || '',
       item.imei || '',
       purchase,
+      coinsQty,
+      coinsValue,
+      actualCost,
       item.salePrice || 0,
-      c,
       gp,
       overheadPerPhone,
       fp,
@@ -1693,7 +1713,7 @@ function openSellModalWithOrder(order) {
   const preview = $('sellProfitPreview');
   if (preview) {
     preview.className = 'profit-preview neutral';
-    preview.textContent = 'Enter sale price to see profit (commission based on purchase price)';
+    preview.textContent = 'Enter sale price to see profit (based on actual cost incl. coins)';
   }
 
   const modal = $('sellModal');
@@ -1713,9 +1733,11 @@ function openSellModalWithOrder(order) {
 
 function updateSellProfitPreview() {
   const purchase = sellOrderData ? (sellOrderData.value || 0) : 0;
+  const coinsQty = sellOrderData ? getCoins(sellOrderData) : 0;
+  const coinsValue = sellOrderData ? getCoinTotalValue(sellOrderData) : 0;
+  const actualCost = purchase + coinsValue;
   const sale = parseFloat(getVal('sellSalePrice')) || 0;
-  const commission = calculateCommission(purchase);
-  const grossProfit = sale - purchase - commission;
+  const grossProfit = sale - actualCost;
   const finalProfit = grossProfit - overheadPerPhone;
 
   const preview = $('sellProfitPreview');
@@ -1727,7 +1749,7 @@ function updateSellProfitPreview() {
     setText('sellFinalProfit', formatINR(finalProfit));
 
     if (preview) {
-      preview.textContent = `Commission: ${formatINR(commission)} | Gross: ${formatINR(grossProfit)} | Final: ${formatINR(finalProfit)}`;
+      preview.textContent = `Actual Cost: ${formatINR(actualCost)} (incl. ${coinsQty} 🪙) | Gross: ${formatINR(grossProfit)} | Final: ${formatINR(finalProfit)}`;
       preview.className = finalProfit >= 0 ? 'profit-preview positive' : 'profit-preview negative';
     }
 
@@ -1767,8 +1789,10 @@ async function confirmSell() {
   }
 
   const purchasePrice = sellOrderData.value || 0;
-  const commission = calculateCommission(purchasePrice);
-  const grossProfit = salePrice - purchasePrice - commission;
+  const coinsQty = getCoins(sellOrderData);
+  const coinsValue = getCoinTotalValue(sellOrderData);
+  const actualCost = purchasePrice + coinsValue;
+  const grossProfit = salePrice - actualCost;
   const finalProfit = grossProfit - overheadPerPhone;
 
   const confirm = await Swal.fire({
@@ -1777,9 +1801,10 @@ async function confirmSell() {
       <div class="text-left">
         <p><strong>Order:</strong> ${sellOrderData.orderId || sellOrderData.id}</p>
         <p><strong>Model:</strong> ${sellOrderData.phoneModel || '—'}</p>
-        <p><strong>Purchase:</strong> ${formatINR(purchasePrice)}</p>
+        <p><strong>Purchase (Agreed):</strong> ${formatINR(purchasePrice)}</p>
+        <p><strong>Coins:</strong> ${coinsQty} 🪙 (${formatINR(coinsValue)})</p>
+        <p><strong>Actual Cost:</strong> ${formatINR(actualCost)}</p>
         <p><strong>Sale Price:</strong> ${formatINR(salePrice)}</p>
-        <p><strong>Commission:</strong> ${formatINR(commission)}</p>
         <p><strong>Gross Profit:</strong> ${formatINR(grossProfit)}</p>
         <p><strong>Overhead/Phone:</strong> ${formatINR(overheadPerPhone)}</p>
         <p><strong>Final Net Profit:</strong> <span class="${finalProfit >= 0 ? 'text-green-600' : 'text-red-600'} font-bold">${formatINR(finalProfit)}</span></p>
@@ -1801,7 +1826,6 @@ async function confirmSell() {
     await db.ref('pickups/' + sellOrderData.id).update({
       sold: true,
       salePrice,
-      commission,
       grossProfit,
       finalNetProfit: finalProfit,
       buyerName,
@@ -1876,15 +1900,6 @@ async function viewOrder(orderId) {
       return;
     }
 
-    const purchase = item.value || 0;
-    const commission = item.commission !== undefined ? item.commission : calculateCommission(purchase);
-
-    if (item.sold && item.profit === undefined) {
-      const netRevenue = (item.salePrice || 0) - commission;
-      item.profit = netRevenue - purchase;
-    }
-
-    item.commission = commission;
     editData = { ...item, id: orderId };
 
     renderDetailView(item);
@@ -1911,18 +1926,20 @@ function renderDetailView(item) {
     const content = $('detailContent');
     if (!content) return;
 
-    let commissionDisplay = '—';
+    const coinsQty = getCoins(item);
+    const coinRate = getCoinRate(item);
+    const coinsValue = getCoinTotalValue(item);
+    const actualCost = getActualPurchaseCost(item);
+
     let grossProfitDisplay = '—';
     let finalProfitDisplay = '—';
     let profitClass = '';
     let finalProfitClass = '';
 
     if (item.sold) {
-      const commission = item.commission !== undefined ? item.commission : calculateCommission(item.value || 0);
-      const grossProfit = item.profit !== undefined ? item.profit : ((item.salePrice || 0) - commission - (item.value || 0));
+      const grossProfit = (item.salePrice || 0) - actualCost;
       const finalProfit = grossProfit - overheadPerPhone;
 
-      commissionDisplay = formatINR(commission);
       grossProfitDisplay = formatINR(grossProfit);
       finalProfitDisplay = formatINR(finalProfit);
 
@@ -1935,7 +1952,6 @@ function renderDetailView(item) {
     if (item.sold) {
       saleHtml = `
         <div class="detail-item"><div class="label">Sale Price</div><div class="value green">${formatINR(item.salePrice || 0)}</div></div>
-        <div class="detail-item"><div class="label">Commission</div><div class="value amber">${commissionDisplay}</div></div>
         <div class="detail-item"><div class="label">Gross Profit</div><div class="value ${profitClass}">${grossProfitDisplay}</div></div>
         <div class="detail-item"><div class="label">Overhead / Phone</div><div class="value">${formatINR(overheadPerPhone)}</div></div>
         <div class="detail-item"><div class="label">Final Net Profit</div><div class="value ${finalProfitClass}">${finalProfitDisplay}</div></div>
@@ -1954,6 +1970,13 @@ function renderDetailView(item) {
       `;
     }
 
+    const coinsBlock = `
+      <div class="detail-item"><div class="label">Coins (Qty)</div><div class="value font-bold text-indigo-700">${coinsQty} 🪙</div></div>
+      <div class="detail-item"><div class="label">Coin Rate (₹/coin)</div><div class="value font-mono">₹${coinRate}</div></div>
+      <div class="detail-item"><div class="label">Coins Total Value</div><div class="value font-bold text-indigo-700">${formatINR(coinsValue)}</div></div>
+      <div class="detail-item"><div class="label">Actual Purchase Cost</div><div class="value font-bold text-emerald-700">${formatINR(actualCost)}</div></div>
+    `;
+
     let html = `
       <div class="flex items-center gap-3 mb-4">
         <span class="badge-status ${getStatusClass(item)} text-sm px-4 py-1.5">${getStatusDisplay(item)}</span>
@@ -1965,7 +1988,7 @@ function renderDetailView(item) {
         <div class="detail-item"><div class="label">Phone Model</div><div class="value">${item.phoneModel || '—'}</div></div>
         <div class="detail-item"><div class="label">IMEI</div><div class="value font-mono text-xs">${item.imei || '—'}</div></div>
         ${item.imei2 ? `<div class="detail-item"><div class="label">IMEI 2</div><div class="value font-mono text-xs">${item.imei2}</div></div>` : ''}
-        <div class="detail-item"><div class="label">Purchase Price</div><div class="value font-bold">${item.value !== undefined && item.value !== null ? formatINR(item.value) : '—'}</div></div>
+        <div class="detail-item"><div class="label">Agreed Value</div><div class="value font-bold">${item.value !== undefined && item.value !== null ? formatINR(item.value) : '—'}</div></div>
         <div class="detail-item"><div class="label">Customer Name</div><div class="value">${item.customerName || '—'}</div></div>
         <div class="detail-item"><div class="label">RAM / Storage</div><div class="value">${getRamStorageText(item) || '—'}</div></div>
         <div class="detail-item"><div class="label">Network</div><div class="value">${item.networkType || '—'}</div></div>
@@ -1974,6 +1997,11 @@ function renderDetailView(item) {
         <div class="detail-item"><div class="label">Time (IST)</div><div class="value text-xs">${item.timestampIST || item.timestamp || '—'}</div></div>
         ${holdHtml}
         ${saleHtml}
+      </div>
+
+      <div class="mt-5 pt-4 border-t border-gray-100">
+        <p class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">🪙 Coins & Actual Cost</p>
+        <div class="detail-grid">${coinsBlock}</div>
       </div>
     `;
 
@@ -2215,6 +2243,9 @@ function toggleEditMode() {
   const imeiOver = imeiVal.length > 15;
   const imei2Over = imei2Val.length > 15;
 
+  const coinsQty = getCoins(item);
+  const coinRate = getCoinRate(item);
+
   let html = `
     <div class="space-y-4">
       <div><label class="edit-label">Order ID</label><input type="text" id="edit-orderId" value="${item.orderId || item.id || ''}" class="edit-field" readonly style="background:#f1f5f9;cursor:not-allowed;"></div>
@@ -2244,7 +2275,12 @@ function toggleEditMode() {
         </div>
       </div>
 
-      <div><label class="edit-label">Purchase Price (₹)</label><input type="number" id="edit-value" value="${item.value !== undefined && item.value !== null ? item.value : ''}" class="edit-field" placeholder="Optional"></div>
+      <div><label class="edit-label">Agreed Value (₹)</label><input type="number" id="edit-value" value="${item.value !== undefined && item.value !== null ? item.value : ''}" class="edit-field" placeholder="Optional"></div>
+
+      <div><label class="edit-label">Coins (Qty)</label>
+        <input type="number" id="edit-coins" value="${coinsQty || ''}" class="edit-field" placeholder="Enter coins quantity" min="0" step="1">
+        <p class="text-[10px] text-gray-500 mt-1">Rate: ₹${coinRate}/coin · Coins value will be recalculated on save.</p>
+      </div>
 
       <div><label class="edit-label">Customer Name</label><input type="text" id="edit-customer" value="${item.customerName || ''}" class="edit-field" placeholder="Optional"></div>
 
@@ -2447,6 +2483,7 @@ async function saveEdit() {
   const imei = getVal('edit-imei').trim();
   const imei2 = getVal('edit-imei2').trim();
   const value = parseFloat(getVal('edit-value')) || 0;
+  const coins = parseInt(getVal('edit-coins')) || 0;
   const customer = getVal('edit-customer').trim();
   const reason = getVal('edit-reason').trim();
   const ramVal = getVal('edit-ram') || '';
@@ -2466,6 +2503,10 @@ async function saveEdit() {
   const billNumberVal = getVal('edit-billNumber').trim();
   const aadhaarNumberVal = getVal('edit-aadhaarNumber').trim();
 
+  const coinRate = getCoinRate(editData);
+  const coinsValue = coins * coinRate;
+  const actualCost = value + coinsValue;
+
   let updated = {
     orderId,
     status,
@@ -2473,6 +2514,10 @@ async function saveEdit() {
     imei: imei || '',
     imei2: imei2 || '',
     value: value || 0,
+    coins: coins,
+    coinValueRate: coinRate,
+    coinTotalValue: coinsValue,
+    actualTotalCost: actualCost,
     customerName: customer || '',
     reason: reason || '',
     ram: ramVal,
@@ -2513,13 +2558,11 @@ async function saveEdit() {
   }
 
   if (editData.sold) {
-    const commission = calculateCommission(value);
-    const grossProfit = salePrice - commission - value;
+    const grossProfit = salePrice - actualCost;
     const finalProfit = grossProfit - overheadPerPhone;
 
     updated.sold = true;
     updated.salePrice = salePrice || 0;
-    updated.commission = commission;
     updated.buyerName = buyer || '';
     updated.buyerContact = buyerContact || '';
     updated.saleDate = saleDate || '';
@@ -2658,22 +2701,33 @@ function exportCSV() {
     return;
   }
 
-  const headers = ['Order ID', 'Status', 'Model', 'RAM/Storage', 'Network', 'IMEI', 'IMEI2', 'Value', 'Customer', 'Reason', 'Time (IST)', 'Agent'];
+  const headers = ['Order ID', 'Status', 'Model', 'RAM/Storage', 'Network', 'IMEI', 'IMEI2', 'Agreed Value', 'Coins Qty', 'Coin Rate', 'Coins Value (₹)', 'Actual Purchase Cost (₹)', 'Customer', 'Reason', 'Time (IST)', 'Agent'];
 
-  const rows = allOrders.map(item => [
-    item.orderId || item.id || '',
-    item.status || '',
-    item.phoneModel || '',
-    getRamStorageText(item) || '',
-    item.networkType || '',
-    item.imei || '',
-    item.imei2 || '',
-    item.value !== undefined ? item.value : '',
-    item.customerName || '',
-    item.reason || '',
-    item.timestampIST || item.timestamp || '',
-    item.agent || ''
-  ]);
+  const rows = allOrders.map(item => {
+    const coinsQty = getCoins(item);
+    const coinRate = getCoinRate(item);
+    const coinsValue = getCoinTotalValue(item);
+    const actualCost = getActualPurchaseCost(item);
+
+    return [
+      item.orderId || item.id || '',
+      item.status || '',
+      item.phoneModel || '',
+      getRamStorageText(item) || '',
+      item.networkType || '',
+      item.imei || '',
+      item.imei2 || '',
+      item.value !== undefined ? item.value : '',
+      coinsQty,
+      coinRate,
+      coinsValue,
+      actualCost,
+      item.customerName || '',
+      item.reason || '',
+      item.timestampIST || item.timestamp || '',
+      item.agent || ''
+    ];
+  });
 
   let csv = '\uFEFF' + headers.join(',') + '\n';
 
@@ -2694,13 +2748,92 @@ function exportCSV() {
 }
 
 // ================================================================
-// DEPOSITS
+// DEPOSITS — 🪙 Commission (Coins) + 💼 Wallet (₹) — SEPARATE LEDGERS
 // ================================================================
+
+// ---- Account toggle (form) ----
+function selectDepositAccount(account) {
+  if (account !== 'commission' && account !== 'wallet') account = 'commission';
+
+  const hidden = $('depositAccount');
+  if (hidden) hidden.value = account;
+
+  document.querySelectorAll('.deposit-account-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.account === account);
+  });
+
+  const label = $('depositAmountLabel');
+  const input = $('depositAmount');
+  const hint = $('depositAmountHint');
+  const preview = $('depositLivePreview');
+
+  if (account === 'commission') {
+    if (label) label.innerHTML = 'Coins <span class="text-red-500">*</span>';
+    if (input) {
+      input.placeholder = 'Enter coins quantity';
+      input.step = '1';
+      input.min = '1';
+    }
+    if (hint) {
+      hint.className = 'text-[11px] text-amber-700 mt-1 flex items-center gap-1';
+      hint.innerHTML = '<span>🪙</span><span>Coins only. Value auto-converted at ₹12.50/coin.</span>';
+    }
+    if (preview) preview.style.display = 'block';
+  } else {
+    if (label) label.innerHTML = 'Amount (₹) <span class="text-red-500">*</span>';
+    if (input) {
+      input.placeholder = 'Enter amount';
+      input.step = '1';
+      input.min = '1';
+    }
+    if (hint) {
+      hint.className = 'text-[11px] text-emerald-700 mt-1 flex items-center gap-1';
+      hint.innerHTML = '<span>💼</span><span>Direct cash amount in ₹.</span>';
+    }
+    if (preview) preview.style.display = 'none';
+  }
+
+  updateDepositLivePreview();
+}
+
+// ---- Live coin → ₹ preview ----
+function updateDepositLivePreview() {
+  const account = $('depositAccount')?.value || 'commission';
+  const previewVal = $('depositLivePreviewValue');
+  if (!previewVal) return;
+  if (account !== 'commission') return;
+
+  const coins = Number(getVal('depositAmount')) || 0;
+  previewVal.textContent = formatINR(coins * COIN_VALUE);
+}
+
+// ---- Reset form ----
+function resetDepositForm() {
+  setVal('depositAmount', '');
+  setVal('depositDescription', '');
+  setVal('depositDate', getLocalYMD());
+  selectDepositAccount('commission');
+}
+
+// ---- History account filter ----
+function setDepositAccountFilter(filter) {
+  depositAccountFilter = filter || 'all';
+  document.querySelectorAll('[data-acc-filter]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.accFilter === depositAccountFilter);
+  });
+  applyDepositFilters();
+}
+
+// ---- Load ----
 async function loadDeposits(force = false) {
   try {
     const data = await getData('deposits', force);
 
-    allDeposits = Object.entries(data).map(([id, item]) => ({ id, ...item }));
+    allDeposits = Object.entries(data).map(([id, item]) => {
+      // Backward compat: legacy deposits (no account) → treat as wallet
+      const account = item.account || 'wallet';
+      return { id, account, ...item };
+    });
     allDeposits.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
     applyDepositFilters();
@@ -2713,6 +2846,10 @@ async function loadDeposits(force = false) {
 
 function applyDepositFilters() {
   let filtered = [...allDeposits];
+
+  if (depositAccountFilter !== 'all') {
+    filtered = filtered.filter(item => item.account === depositAccountFilter);
+  }
 
   const dateFrom = getVal('depositDateFrom');
   const dateTo = getVal('depositDateTo');
@@ -2736,38 +2873,45 @@ function clearDepositDateFilter() {
   showToast('Date filters cleared', 'info');
 }
 
-async function updateDepositStats() {
-  let total = 0;
+// ---- Stats (two separate balances) ----
+function updateDepositStats() {
+  let commissionCoins = 0;
+  let commissionValue = 0;
+  let commissionCount = 0;
+  let commissionLastDate = '—';
+
+  let walletTotal = 0;
+  let walletCount = 0;
+  let walletLastDate = '—';
 
   allDeposits.forEach(d => {
-    total += d.amount || 0;
-  });
-
-  setText('depositTotal', formatINR(total));
-  setText('depositCount', allDeposits.length);
-  setText('depositCountDisplay', allDeposits.length + ' entries');
-  setText('depositsBadge', allDeposits.length);
-
-  let stockValue = 0;
-  let totalCommission = 0;
-
-  const pickups = cache.pickups || await getData('pickups', false);
-
-  Object.values(pickups).forEach(item => {
-    if (item.status === 'pickup') stockValue += item.value || 0;
-
-    if (item.status !== 'on_hold') {
-      totalCommission += item.commission !== undefined
-        ? item.commission
-        : calculateCommission(item.value || 0);
+    if (d.account === 'commission') {
+      commissionCoins += Number(d.coins) || 0;
+      commissionValue += Number(d.amount) || 0;
+      commissionCount++;
+      const dt = d.date || '';
+      if (dt && (commissionLastDate === '—' || dt > commissionLastDate)) commissionLastDate = dt;
+    } else {
+      walletTotal += Number(d.amount) || 0;
+      walletCount++;
+      const dt = d.date || '';
+      if (dt && (walletLastDate === '—' || dt > walletLastDate)) walletLastDate = dt;
     }
   });
 
-  setText('depositStockValue', formatINR(stockValue));
-  setText('depositBalance', formatINR(total - stockValue));
-  setText('depositCommission', formatINR(totalCommission));
+  setText('commissionBalanceCoins', commissionCoins.toLocaleString('en-IN'));
+  setText('commissionBalanceValue', formatINR(commissionValue));
+  setText('commissionEntryCount', commissionCount);
+  setText('commissionLastDate', commissionLastDate);
+
+  setText('walletBalance', formatINR(walletTotal));
+  setText('walletEntryCount', walletCount);
+  setText('walletLastDate', walletLastDate);
+
+  setText('depositsBadge', allDeposits.length);
 }
 
+// ---- Table ----
 function renderDepositsTable() {
   const tbody = $('depositsTableBody');
   if (!tbody) return;
@@ -2790,7 +2934,7 @@ function renderDepositsTable() {
   if (nextBtn) nextBtn.disabled = depositCurrentPage >= totalPages;
 
   if (!pageItems.length) {
-    tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No deposits found</p></div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No deposits found</p></div></td></tr>`;
     refreshIcons();
     return;
   }
@@ -2799,11 +2943,28 @@ function renderDepositsTable() {
 
   pageItems.forEach((item, idx) => {
     const num = start + idx + 1;
+    const isCommission = item.account === 'commission';
+
+    let accountBadge, amountCell;
+
+    if (isCommission) {
+      const coins = Number(item.coins) || 0;
+      const value = Number(item.amount) || 0;
+      accountBadge = `<span class="badge-status" style="background:#fef3c7;color:#92400e;border:1px solid #fde68a;">🪙 Commission</span>`;
+      amountCell = `
+        <div class="font-bold text-amber-700">${coins.toLocaleString('en-IN')} 🪙</div>
+        <div class="text-[11px] text-gray-500 font-normal">${formatINR(value)}</div>
+      `;
+    } else {
+      accountBadge = `<span class="badge-status" style="background:#d1fae5;color:#065f46;border:1px solid #a7f3d0;">💼 Wallet</span>`;
+      amountCell = `<span class="font-bold text-emerald-600">${formatINR(item.amount || 0)}</span>`;
+    }
 
     html += `
       <tr class="order-row border-b border-gray-50">
         <td class="py-3 px-4 text-gray-400 font-mono text-xs">${num}</td>
-        <td class="py-3 px-4 font-bold text-green-600">${formatINR(item.amount || 0)}</td>
+        <td class="py-3 px-4">${accountBadge}</td>
+        <td class="py-3 px-4">${amountCell}</td>
         <td class="py-3 px-4 text-gray-600 text-sm">${item.description || '—'}</td>
         <td class="py-3 px-4 hidden sm:table-cell text-xs text-gray-500">${item.date || '—'}</td>
         <td class="py-3 px-4 hidden md:table-cell text-xs text-gray-400">${item.timestamp ? new Date(item.timestamp).toLocaleString() : '—'}</td>
@@ -2827,67 +2988,147 @@ function prevDepositPage() {
 
 function nextDepositPage() {
   const totalPages = Math.ceil(filteredDeposits.length / depositPageSize);
-
   if (depositCurrentPage < totalPages) {
     depositCurrentPage++;
     renderDepositsTable();
   }
 }
 
+// ---- Add deposit (with validation + duplicate protection) ----
 function submitDeposit(e) {
-  e.preventDefault();
+  if (e) e.preventDefault();
 
-  const amount = parseFloat(getVal('depositAmount'));
+  const account = $('depositAccount')?.value || 'commission';
+  const rawAmount = parseFloat(getVal('depositAmount'));
   const date = getVal('depositDate') || getLocalYMD();
   const description = getVal('depositDescription').trim();
 
-  if (!amount || amount <= 0) {
-    showToast('Please enter a valid amount', 'error');
+  // Validation
+  if (!rawAmount || rawAmount <= 0) {
+    showToast(account === 'commission' ? 'Enter a valid coins quantity' : 'Enter a valid amount', 'error');
+    const amtEl = $('depositAmount');
+    if (amtEl) amtEl.focus();
     return;
   }
 
-  Swal.fire({
+  if (account === 'commission' && !Number.isInteger(rawAmount)) {
+    showToast('Coins must be a whole number', 'error');
+    return;
+  }
+
+  // Build entry
+  let entry;
+  if (account === 'commission') {
+    const coins = rawAmount;
+    const value = coins * COIN_VALUE;
+    entry = {
+      account: 'commission',
+      coins,
+      amount: value,
+      coinRate: COIN_VALUE,
+      date,
+      description: description || '',
+      timestamp: Date.now()
+    };
+  } else {
+    entry = {
+      account: 'wallet',
+      amount: rawAmount,
+      date,
+      description: description || '',
+      timestamp: Date.now()
+    };
+  }
+
+  // Duplicate protection (same account + amount + date + description within 60s)
+  const sixtySecAgo = Date.now() - 60_000;
+  const duplicate = allDeposits.find(d =>
+    d.account === entry.account &&
+    (d.date || '') === entry.date &&
+    (entry.account === 'commission'
+      ? Number(d.coins) === Number(entry.coins)
+      : Number(d.amount) === Number(entry.amount)) &&
+    (d.description || '') === (entry.description || '') &&
+    (d.timestamp || 0) > sixtySecAgo
+  );
+
+  if (duplicate) {
+    Swal.fire({
+      icon: 'warning',
+      title: 'Possible Duplicate',
+      text: 'An identical entry was added less than a minute ago. Add it anyway?',
+      showCancelButton: true,
+      confirmButtonColor: '#f59e0b',
+      cancelButtonColor: '#64748b',
+      confirmButtonText: 'Yes, Add Anyway',
+      cancelButtonText: 'Cancel'
+    }).then(r => {
+      if (r.isConfirmed) saveDepositEntry(entry);
+    });
+    return;
+  }
+
+  saveDepositEntry(entry);
+}
+
+async function saveDepositEntry(entry) {
+  const isCommission = entry.account === 'commission';
+  const label = isCommission
+    ? `${entry.coins.toLocaleString('en-IN')} 🪙 (${formatINR(entry.amount)})`
+    : formatINR(entry.amount);
+
+  const confirm = await Swal.fire({
     title: 'Add Deposit?',
-    text: `Amount: ${formatINR(amount)} | Date: ${date}`,
+    html: `
+      <div class="text-left text-sm space-y-1">
+        <p><strong>Account:</strong> ${isCommission ? '🪙 Commission' : '💼 Wallet'}</p>
+        <p><strong>Amount:</strong> ${label}</p>
+        <p><strong>Date:</strong> ${entry.date}</p>
+        ${entry.description ? `<p><strong>Description:</strong> ${entry.description}</p>` : ''}
+      </div>
+    `,
     icon: 'question',
     showCancelButton: true,
     confirmButtonColor: '#059669',
     cancelButtonColor: '#64748b',
     confirmButtonText: 'Yes, Add',
     cancelButtonText: 'Cancel'
-  }).then(async (result) => {
-    if (!result.isConfirmed) return;
-
-    try {
-      const newRef = db.ref('deposits').push();
-
-      await newRef.set({
-        amount,
-        date,
-        description: description || '',
-        timestamp: Date.now()
-      });
-
-      invalidate('deposits');
-      showToast('✅ Deposit added successfully!', 'success');
-
-      setVal('depositAmount', '');
-      setVal('depositDescription', '');
-      setVal('depositDate', getLocalYMD());
-
-      loadDeposits(true);
-      loadDashboard(true);
-    } catch (e) {
-      console.error('Add deposit error:', e);
-      showToast('Error adding deposit', 'error');
-    }
   });
+
+  if (!confirm.isConfirmed) return;
+
+  try {
+    const newRef = db.ref('deposits').push();
+    await newRef.set(entry);
+
+    invalidate('deposits');
+    showToast(`✅ ${isCommission ? 'Commission' : 'Wallet'} deposit added!`, 'success');
+
+    resetDepositForm();
+    loadDeposits(true);
+    loadDashboard(true);
+  } catch (e) {
+    console.error('Add deposit error:', e);
+    showToast('Error adding deposit', 'error');
+  }
 }
 
 async function deleteDeposit(depositId) {
+  const deposit = allDeposits.find(d => d.id === depositId);
+  const accLabel = deposit
+    ? (deposit.account === 'commission' ? '🪙 Commission' : '💼 Wallet')
+    : '';
+
   const confirm = await Swal.fire({
     title: 'Delete Deposit?',
-    text: 'This action cannot be undone.',
+    html: `
+      <div class="text-left text-sm">
+        ${deposit ? `<p><strong>Account:</strong> ${accLabel}</p>` : ''}
+        ${deposit && deposit.account === 'commission' ? `<p><strong>Coins:</strong> ${(Number(deposit.coins) || 0).toLocaleString('en-IN')} 🪙</p>` : ''}
+        ${deposit ? `<p><strong>Amount:</strong> ${formatINR(deposit.amount || 0)}</p>` : ''}
+        <p class="text-red-600 mt-2 font-semibold">This action cannot be undone.</p>
+      </div>
+    `,
     icon: 'warning',
     showCancelButton: true,
     confirmButtonColor: '#dc2626',
@@ -2900,10 +3141,8 @@ async function deleteDeposit(depositId) {
 
   try {
     await db.ref('deposits/' + depositId).remove();
-
     invalidate('deposits');
     showToast('🗑️ Deposit deleted', 'success');
-
     loadDeposits(true);
     loadDashboard(true);
   } catch (e) {
@@ -2918,17 +3157,22 @@ function exportDepositsCSV() {
     return;
   }
 
-  const headers = ['Amount', 'Description', 'Date', 'Added On'];
+  const headers = ['Account', 'Coins', 'Amount (₹)', 'Coin Rate', 'Description', 'Date', 'Added On'];
 
-  const rows = filteredDeposits.map(item => [
-    item.amount || 0,
-    item.description || '—',
-    item.date || '—',
-    item.timestamp ? new Date(item.timestamp).toLocaleString() : '—'
-  ]);
+  const rows = filteredDeposits.map(item => {
+    const isCommission = item.account === 'commission';
+    return [
+      isCommission ? 'Commission' : 'Wallet',
+      isCommission ? (Number(item.coins) || 0) : '',
+      item.amount || 0,
+      isCommission ? (item.coinRate || COIN_VALUE) : '',
+      item.description || '—',
+      item.date || '—',
+      item.timestamp ? new Date(item.timestamp).toLocaleString() : '—'
+    ];
+  });
 
   let csv = '\uFEFF' + headers.join(',') + '\n';
-
   rows.forEach(row => {
     csv += row.map(val => `"${String(val).replace(/"/g, '""')}"`).join(',') + '\n';
   });
@@ -3537,10 +3781,8 @@ function closeActivityModal() {
 }
 
 // ================================================================
-// ATTENDANCE & OTP MANAGEMENT SYSTEM (Clean Integration)
+// ATTENDANCE & OTP MANAGEMENT SYSTEM
 // ================================================================
-
-// Filter ONLY active agents (excludes inactive / resigned agents)
 function getActiveAgents(users) {
   return Object.fromEntries(
     Object.entries(users || {}).filter(([_, u]) => {
@@ -3551,7 +3793,6 @@ function getActiveAgents(users) {
   );
 }
 
-// Bulk generate OTPs for all active agents for the selected date
 async function generateOTPs() {
   const users = await getData('users', true);
   const dateInput = $('attendanceDate');
@@ -3591,7 +3832,6 @@ async function generateOTPs() {
         used: false,
         valid_date: targetDate
       };
-      // Keep per-agent reference compatible
       updates[`otp/${uname}`] = {
         otp,
         date: targetDate,
@@ -3610,7 +3850,6 @@ async function generateOTPs() {
   }
 }
 
-// Single agent OTP modal generator
 async function openOtpGeneratorModal(username) {
   const dateInput = $('attendanceDate');
   const targetDate = (dateInput && dateInput.value) ? dateInput.value : getLocalYMD();
@@ -3647,7 +3886,6 @@ async function openOtpGeneratorModal(username) {
       showToast('Generate OTP first', 'info');
     }
   } else if (action === false) {
-    // Regenerate
     await generateSingleAgentOtp(username, targetDate);
   }
 }
@@ -3681,7 +3919,6 @@ async function generateSingleAgentOtp(username, targetDate) {
   }
 }
 
-// Load daily attendance list
 async function loadAttendance(force = false) {
   const dateInput = $('attendanceDate');
   if (dateInput && !dateInput.value) {
@@ -3701,7 +3938,6 @@ async function loadAttendance(force = false) {
     ]);
 
     const otps = otpSnap.val() || {};
-    // Active agents only - excludes resigned/inactive agents
     const agents = getActiveAgents(users);
     const activeCount = Object.keys(agents).length;
 
@@ -3759,7 +3995,6 @@ async function loadAttendance(force = false) {
           <div class="flex items-center gap-2">
             <div>${badge}</div>
 
-            <!-- Quick Action Dropdown / Buttons -->
             <div class="flex items-center gap-1.5 ml-2">
               <button onclick="setAgentAttendanceStatus('${uname}', '${date}', 'present', false)" title="Mark Present" class="px-2 py-1 text-xs rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50 font-semibold">
                 Present
@@ -3782,7 +4017,6 @@ async function loadAttendance(force = false) {
       `;
     }
 
-    // Top summary banner
     const summaryBanner = `
       <div class="grid grid-cols-4 gap-3 mb-4 text-center">
         <div class="p-3 bg-blue-50 border border-blue-100 rounded-xl">
@@ -3812,11 +4046,6 @@ async function loadAttendance(force = false) {
   }
 }
 
-// Status update directly from Admin
-
-// ================================================================
-// UNMARK / RESET ATTENDANCE
-// ================================================================
 async function unmarkAgentAttendance(username, date) {
   if (!username || !date) return;
   const res = await Swal.fire({
@@ -3833,7 +4062,6 @@ async function unmarkAgentAttendance(username, date) {
 
   try {
     await db.ref(`attendance/${username}/${date}`).remove();
-    // Also reset block if agent was marked absent
     const userSnap = await db.ref(`users/${username}`).once('value');
     const uData = userSnap.val() || {};
     if (uData.blocked_date === date || uData.is_blocked) {
@@ -3849,9 +4077,8 @@ async function unmarkAgentAttendance(username, date) {
       Swal.fire('Unmarked', 'Attendance record cleared.', 'success');
     }
 
-    // Refresh attendance view
-    if (typeof loadAttendanceData === 'function') {
-      loadAttendanceData();
+    if (typeof loadAttendance === 'function') {
+      loadAttendance(true);
     }
   } catch (err) {
     console.error('Error unmarking attendance:', err);
@@ -3887,7 +4114,6 @@ async function setAgentAttendanceStatus(username, date, status, isHalfDay = fals
   }
 }
 
-// Mark all active agents present
 async function markAllPresent() {
   const dateInput = $('attendanceDate');
   const targetDate = (dateInput && dateInput.value) ? dateInput.value : getLocalYMD();
@@ -3938,7 +4164,6 @@ async function markAllPresent() {
     showToast('Failed to mark all present', 'error');
   }
 }
-
 
 async function viewAttendanceHistory(username) {
   const monthInput = $('salaryMonth');
@@ -4351,7 +4576,6 @@ async function loadSalaryData(force = false) {
         if (isPresent && salaryCounted) {
           let dayBaseSalary = perDaySalary;
 
-          // HALF DAY SALARY: admin ne Half Day select kiya hai to 50%
           if (att.half_day === true) {
             dayBaseSalary = perDaySalary * 0.5;
             agentHalfDayCount++;
@@ -4414,7 +4638,6 @@ async function loadSalaryData(force = false) {
         }
       }
 
-      // Calculate adjustments for this agent
       const agentAdjustments = Object.values(allAdjustments[uname] || {});
       let totalBonusIncentives = 0;
       let totalDeductions = 0;
@@ -4952,8 +5175,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const salaryDate = $('salaryDate');
   if (salaryDate) salaryDate.value = getLocalYMD();
 
-  const depositDate = $('depositDate');
-  if (depositDate) depositDate.value = getLocalYMD();
+  // Deposit section init (dual account)
+  selectDepositAccount('commission');
+  const depositDateEl = $('depositDate');
+  if (depositDateEl) depositDateEl.value = getLocalYMD();
+  const depositAmtEl = $('depositAmount');
+  if (depositAmtEl) depositAmtEl.addEventListener('input', updateDepositLivePreview);
 
   const agentRole = document.querySelector('input[name="regRole"][value="agent"]');
   if (agentRole) agentRole.checked = true;
@@ -4961,7 +5188,6 @@ document.addEventListener('DOMContentLoaded', () => {
   toggleAdminFields();
   setSalaryMode('today');
 
-  // Auto refresh only when tab visible
   setInterval(() => {
     if (document.hidden) return;
     refreshCurrentPage(true);
@@ -5024,14 +5250,11 @@ document.addEventListener('keydown', function (e) {
   }
 });
 
-
 // ================================================================
-// PAYMENT & ADJUSTMENT SYSTEM (Bonus, Advance, Incentives, Cuts)
+// PAYMENT & ADJUSTMENT SYSTEM
 // ================================================================
-
 let currentAdjustmentAgent = null;
 
-// Modal for adding Payment / Adjustment
 async function openAddAdjustmentModal(defaultAgent = '') {
   const users = await getData('users', false);
   const activeAgents = getActiveAgents(users);
@@ -5154,9 +5377,9 @@ async function openAddAdjustmentModal(defaultAgent = '') {
       date: formValues.date,
       time: formValues.time || '12:00',
       timestamp: new Date(`${formValues.date}T${formValues.time || '12:00'}`).getTime() || Date.now(),
-      effect: formValues.effect, // 'add', 'deduct', 'neutral'
+      effect: formValues.effect,
       deductIncentives: formValues.deductIncentives === 'yes',
-      adjustTarget: formValues.adjustTarget, // 'current', 'previous_balance'
+      adjustTarget: formValues.adjustTarget,
       reason: formValues.reason || 'None',
       createdAt: Date.now(),
       createdBy: 'admin'
@@ -5165,7 +5388,6 @@ async function openAddAdjustmentModal(defaultAgent = '') {
     await db.ref(`adjustments/${formValues.agent}/${adjId}`).set(entry);
     showToast(`✅ ${formValues.type} of ₹${formValues.amount} saved!`, 'success');
     
-    // Refresh calculations
     loadSalaryData(true);
     if (currentPageView === 'adjustments') loadAdjustmentHistory();
   } catch (e) {
@@ -5174,7 +5396,6 @@ async function openAddAdjustmentModal(defaultAgent = '') {
   }
 }
 
-// Adjustment History Viewer
 async function openAdjustmentHistoryModal(agentUsername = null) {
   try {
     const snap = await db.ref('adjustments').once('value');
@@ -5281,11 +5502,10 @@ async function deleteAdjustment(agent, id) {
 }
 
 // ================================================================
-// ATTENDANCE CALENDAR SYSTEM (Monthly Matrix with Switcher)
+// ATTENDANCE CALENDAR SYSTEM
 // ================================================================
-
 let currentCalendarYear = new Date().getFullYear();
-let currentCalendarMonth = new Date().getMonth() + 1; // 1-12
+let currentCalendarMonth = new Date().getMonth() + 1;
 let currentCalendarAgent = null;
 
 async function viewAttendanceCalendar(username = null) {
@@ -5332,7 +5552,7 @@ async function renderAttendanceCalendarModal() {
   const userAtt = (allAtt && allAtt[username]) || {};
 
   const daysInMonth = new Date(year, month, 0).getDate();
-  const firstDayIndex = new Date(year, month - 1, 1).getDay(); // 0 is Sun
+  const firstDayIndex = new Date(year, month - 1, 1).getDay();
 
   let presentCount = 0;
   let halfDayCount = 0;
@@ -5341,7 +5561,6 @@ async function renderAttendanceCalendarModal() {
 
   let calendarCells = '';
 
-  // Blank cells before month starts
   for (let i = 0; i < firstDayIndex; i++) {
     calendarCells += `<div class="p-2 min-h-[50px] bg-gray-50 rounded-lg border border-gray-100 opacity-30"></div>`;
   }
@@ -5407,7 +5626,6 @@ async function renderAttendanceCalendarModal() {
 
   const html = `
     <div class="text-left font-sans">
-      <!-- Top header with Agent select and month controls -->
       <div class="flex flex-wrap items-center justify-between gap-2 mb-4 pb-3 border-b border-gray-100">
         <div class="flex items-center gap-2">
           <label class="text-xs font-semibold text-gray-600">Agent:</label>
@@ -5423,7 +5641,6 @@ async function renderAttendanceCalendarModal() {
         </div>
       </div>
 
-      <!-- Monthly Summary Metrics Banner -->
       <div class="grid grid-cols-4 gap-2 mb-4 text-center">
         <div class="p-2 bg-emerald-50 border border-emerald-100 rounded-xl">
           <div class="text-[10px] text-emerald-600 font-semibold uppercase">Present</div>
@@ -5443,12 +5660,10 @@ async function renderAttendanceCalendarModal() {
         </div>
       </div>
 
-      <!-- Weekday headers -->
       <div class="grid grid-cols-7 gap-1 text-center font-bold text-[11px] text-gray-500 mb-1">
         <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
       </div>
 
-      <!-- Calendar Days Grid -->
       <div class="grid grid-cols-7 gap-1.5 max-h-[380px] overflow-y-auto no-scrollbar p-1">
         ${calendarCells}
       </div>
@@ -5468,7 +5683,6 @@ async function renderAttendanceCalendarModal() {
   });
 }
 
-// Quick click on calendar box to change status
 async function quickToggleDay(username, dateStr, currentStatus, isHalfDay) {
   const { value: newStatus } = await Swal.fire({
     title: `Date: ${dateStr}`,
