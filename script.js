@@ -1,5 +1,6 @@
 // File: script.js
-// Admin Panel - Full Updated Script with Coin System + Dual-Account Deposits
+// Cashify Admin Panel — Full Script
+// Attendance + Salary & Earnings backend integrated from Flipkart system
 
 // ================================================================
 // FIREBASE CONFIG
@@ -43,6 +44,15 @@ const getVal = (id) => {
   const el = $(id);
   return el ? el.value : '';
 };
+
+// 🆕 addDays helper (required by Flipkart Salary backend)
+function addDays(dateStr, n) {
+  if (!dateStr) return getLocalYMD();
+  const d = new Date(dateStr + 'T00:00:00');
+  if (isNaN(d)) return getLocalYMD();
+  d.setDate(d.getDate() + n);
+  return getLocalYMD(d);
+}
 
 // ================================================================
 // 🪙 COIN SYSTEM (replaces commission entirely)
@@ -248,7 +258,8 @@ const cache = {
   pending: null,
   users: null,
   deposits: null,
-  attendance: null
+  attendance: null,
+  salary_payments: null
 };
 
 const cacheTime = {
@@ -256,7 +267,8 @@ const cacheTime = {
   pending: 0,
   users: 0,
   deposits: 0,
-  attendance: 0
+  attendance: 0,
+  salary_payments: 0
 };
 
 function invalidate(...nodes) {
@@ -798,7 +810,6 @@ async function loadDashboard(force = false) {
       }
     }
 
-    // Total overhead from wallet deposits only (commission deposits are coins, not cash overhead)
     let walletOverhead = 0;
     Object.values(deposits).forEach(d => {
       const account = d.account || 'wallet';
@@ -2751,7 +2762,6 @@ function exportCSV() {
 // DEPOSITS — 🪙 Commission (Coins) + 💼 Wallet (₹) — SEPARATE LEDGERS
 // ================================================================
 
-// ---- Account toggle (form) ----
 function selectDepositAccount(account) {
   if (account !== 'commission' && account !== 'wallet') account = 'commission';
 
@@ -2796,7 +2806,6 @@ function selectDepositAccount(account) {
   updateDepositLivePreview();
 }
 
-// ---- Live coin → ₹ preview ----
 function updateDepositLivePreview() {
   const account = $('depositAccount')?.value || 'commission';
   const previewVal = $('depositLivePreviewValue');
@@ -2807,7 +2816,6 @@ function updateDepositLivePreview() {
   previewVal.textContent = formatINR(coins * COIN_VALUE);
 }
 
-// ---- Reset form ----
 function resetDepositForm() {
   setVal('depositAmount', '');
   setVal('depositDescription', '');
@@ -2815,7 +2823,6 @@ function resetDepositForm() {
   selectDepositAccount('commission');
 }
 
-// ---- History account filter ----
 function setDepositAccountFilter(filter) {
   depositAccountFilter = filter || 'all';
   document.querySelectorAll('[data-acc-filter]').forEach(btn => {
@@ -2824,20 +2831,18 @@ function setDepositAccountFilter(filter) {
   applyDepositFilters();
 }
 
-// ---- Load ----
 async function loadDeposits(force = false) {
   try {
     const data = await getData('deposits', force);
 
     allDeposits = Object.entries(data).map(([id, item]) => {
-      // Backward compat: legacy deposits (no account) → treat as wallet
       const account = item.account || 'wallet';
       return { id, account, ...item };
     });
     allDeposits.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
     applyDepositFilters();
-    updateDepositStats();
+    await updateDepositStats();
   } catch (e) {
     console.error('Load deposits error:', e);
     showToast('Error loading deposits', 'error');
@@ -2873,8 +2878,12 @@ function clearDepositDateFilter() {
   showToast('Date filters cleared', 'info');
 }
 
-// ---- Stats (two separate balances) ----
-function updateDepositStats() {
+// ────────────────────────────────────────────────────────────────
+// 🆕 updateDepositStats — now also computes Purchases (Wallet spend)
+//    and Commission Given (Coins spend), then shows Remaining balance
+// ────────────────────────────────────────────────────────────────
+async function updateDepositStats() {
+  // ---- Totals from deposit entries (unchanged behavior) ----
   let commissionCoins = 0;
   let commissionValue = 0;
   let commissionCount = 0;
@@ -2899,6 +2908,33 @@ function updateDepositStats() {
     }
   });
 
+  // ---- NEW: Spend tracking from acquired pickups ----
+  // Wallet spend  = sum of `value` (agreed price paid to customer)
+  // Coins spend   = sum of `coins` (commission given to agent)
+  let totalPurchaseCost = 0;
+  let totalCoinsUsed = 0;
+
+  try {
+    const pickups = await getData('pickups', false);
+    Object.values(pickups).forEach(item => {
+      if (!item) return;
+      if (item.status !== 'pickup') return; // only acquired phones
+
+      const val = Number(item.value) || 0;
+      totalPurchaseCost += val;
+
+      const coinsQty = getCoins(item);
+      totalCoinsUsed += coinsQty;
+    });
+  } catch (e) {
+    console.warn('Could not compute spend from pickups:', e);
+  }
+
+  const remainingWallet = walletTotal - totalPurchaseCost;
+  const remainingCoins = commissionCoins - totalCoinsUsed;
+  const remainingCoinsValue = remainingCoins * COIN_VALUE;
+
+  // ---- Base displays (unchanged) ----
   setText('commissionBalanceCoins', commissionCoins.toLocaleString('en-IN'));
   setText('commissionBalanceValue', formatINR(commissionValue));
   setText('commissionEntryCount', commissionCount);
@@ -2909,9 +2945,91 @@ function updateDepositStats() {
   setText('walletLastDate', walletLastDate);
 
   setText('depositsBadge', allDeposits.length);
+
+  // ---- NEW: Inject "Remaining" breakdown inside each card ----
+  injectBalanceBreakdown({
+    walletTotal,
+    totalPurchaseCost,
+    remainingWallet,
+    commissionCoins,
+    commissionValue,
+    totalCoinsUsed,
+    remainingCoins,
+    remainingCoinsValue
+  });
 }
 
-// ---- Table ----
+// 🆕 Injects remaining-balance breakdown without touching HTML
+function injectBalanceBreakdown({
+  walletTotal,
+  totalPurchaseCost,
+  remainingWallet,
+  commissionCoins,
+  commissionValue,
+  totalCoinsUsed,
+  remainingCoins,
+  remainingCoinsValue
+}) {
+  // ----- Wallet card breakdown -----
+  const walletCard = document.querySelector('#walletBalance')?.closest('.glass');
+  if (walletCard) {
+    let box = walletCard.querySelector('#walletBreakdownBox');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'walletBreakdownBox';
+      box.className = 'mt-3 pt-3 border-t border-emerald-200 text-[11px] space-y-1';
+      walletCard.appendChild(box);
+    }
+
+    const rwColor = remainingWallet >= 0 ? 'text-emerald-800' : 'text-rose-700';
+
+    box.innerHTML = `
+      <div class="flex items-center justify-between">
+        <span class="text-gray-600">Total Deposited</span>
+        <span class="font-bold text-emerald-800">${formatINR(walletTotal)}</span>
+      </div>
+      <div class="flex items-center justify-between">
+        <span class="text-gray-600">− Purchases (Agreed Price)</span>
+        <span class="font-bold text-rose-600">-${formatINR(totalPurchaseCost)}</span>
+      </div>
+      <div class="flex items-center justify-between border-t border-emerald-200 pt-1 mt-1">
+        <span class="font-bold text-gray-700">Remaining Wallet</span>
+        <span class="font-black ${rwColor}">${formatINR(remainingWallet)}</span>
+      </div>
+    `;
+  }
+
+  // ----- Commission card breakdown -----
+  const commissionCard = document.querySelector('#commissionBalanceCoins')?.closest('.glass');
+  if (commissionCard) {
+    let box = commissionCard.querySelector('#commissionBreakdownBox');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'commissionBreakdownBox';
+      box.className = 'mt-3 pt-3 border-t border-amber-200 text-[11px] space-y-1';
+      commissionCard.appendChild(box);
+    }
+
+    const rcColor = remainingCoins >= 0 ? 'text-amber-800' : 'text-rose-700';
+
+    box.innerHTML = `
+      <div class="flex items-center justify-between">
+        <span class="text-gray-600">Total Coins Deposited</span>
+        <span class="font-bold text-amber-800">${commissionCoins.toLocaleString('en-IN')} 🪙</span>
+      </div>
+      <div class="flex items-center justify-between">
+        <span class="text-gray-600">− Commission Given</span>
+        <span class="font-bold text-rose-600">-${totalCoinsUsed.toLocaleString('en-IN')} 🪙</span>
+      </div>
+      <div class="flex items-center justify-between border-t border-amber-200 pt-1 mt-1">
+        <span class="font-bold text-gray-700">Remaining Coins</span>
+        <span class="font-black ${rcColor}">${remainingCoins.toLocaleString('en-IN')} 🪙</span>
+      </div>
+      <div class="text-right text-[10px] text-gray-500 mt-0.5">≈ ${formatINR(remainingCoinsValue)}</div>
+    `;
+  }
+}
+
 function renderDepositsTable() {
   const tbody = $('depositsTableBody');
   if (!tbody) return;
@@ -2994,7 +3112,6 @@ function nextDepositPage() {
   }
 }
 
-// ---- Add deposit (with validation + duplicate protection) ----
 function submitDeposit(e) {
   if (e) e.preventDefault();
 
@@ -3003,7 +3120,6 @@ function submitDeposit(e) {
   const date = getVal('depositDate') || getLocalYMD();
   const description = getVal('depositDescription').trim();
 
-  // Validation
   if (!rawAmount || rawAmount <= 0) {
     showToast(account === 'commission' ? 'Enter a valid coins quantity' : 'Enter a valid amount', 'error');
     const amtEl = $('depositAmount');
@@ -3016,7 +3132,6 @@ function submitDeposit(e) {
     return;
   }
 
-  // Build entry
   let entry;
   if (account === 'commission') {
     const coins = rawAmount;
@@ -3040,7 +3155,6 @@ function submitDeposit(e) {
     };
   }
 
-  // Duplicate protection (same account + amount + date + description within 60s)
   const sixtySecAgo = Date.now() - 60_000;
   const duplicate = allDeposits.find(d =>
     d.account === entry.account &&
@@ -3193,7 +3307,6 @@ function refreshDeposits() {
   loadDeposits(true);
   showToast('🔄 Deposits refreshed', 'info');
 }
-
 // ================================================================
 // AGENTS
 // ================================================================
@@ -3662,6 +3775,15 @@ async function viewAgentActivityWithPeriod(username, period) {
     const date = period.date;
     filterFn = (ts) => ts && getLocalYMD(new Date(ts)) === date;
     periodLabel = date;
+  } else if (period.mode === 'current_cycle') {
+    const startD = period.cycleStart || '2020-01-01';
+    const endD = period.cycleEnd || getLocalYMD();
+    filterFn = (ts) => {
+      if (!ts) return false;
+      const ds = getLocalYMD(new Date(ts));
+      return ds >= startD && ds <= endD;
+    };
+    periodLabel = `${startD} → ${endD}`;
   } else {
     filterFn = () => true;
     periodLabel = 'All Time';
@@ -3781,7 +3903,7 @@ function closeActivityModal() {
 }
 
 // ================================================================
-// ATTENDANCE & OTP MANAGEMENT SYSTEM
+// ATTENDANCE & OTP MANAGEMENT SYSTEM  (Flipkart backend)
 // ================================================================
 function getActiveAgents(users) {
   return Object.fromEntries(
@@ -3949,6 +4071,7 @@ async function loadAttendance(force = false) {
     let presentCount = 0;
     let absentCount = 0;
     let halfDayCount = 0;
+    let unmarkedCount = 0;
 
     let itemsHtml = '';
 
@@ -3960,6 +4083,7 @@ async function loadAttendance(force = false) {
       const status = att.status || 'unmarked';
       const isBlocked = att.blocked === true || uData.is_blocked === true;
       const isHalf = att.half_day === true;
+      const isMarked = status === 'present' || status === 'absent';
 
       let badge = '<span class="px-2.5 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-600">Not Marked</span>';
 
@@ -3973,10 +4097,18 @@ async function loadAttendance(force = false) {
         }
       } else if (status === 'absent') {
         absentCount++;
-        badge = isBlocked 
+        badge = isBlocked
           ? '<span class="px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-100 text-rose-800">🚫 Blocked</span>'
           : '<span class="px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-50 text-rose-700">❌ Absent</span>';
+      } else {
+        unmarkedCount++;
       }
+
+      const unmarkBtn = isMarked
+        ? `<button onclick="setAgentAttendanceStatus('${uname}', '${date}', 'unmarked', false)" title="Unmark attendance" class="px-2 py-1 text-xs rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-100 font-semibold">
+             ⚪ Unmark
+           </button>`
+        : '';
 
       itemsHtml += `
         <div class="glass rounded-xl p-4 border border-gray-100 flex flex-wrap items-center justify-between gap-3 hover:shadow-sm transition">
@@ -3992,10 +4124,10 @@ async function loadAttendance(force = false) {
             </div>
           </div>
 
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2 flex-wrap">
             <div>${badge}</div>
 
-            <div class="flex items-center gap-1.5 ml-2">
+            <div class="flex items-center gap-1.5 ml-2 flex-wrap">
               <button onclick="setAgentAttendanceStatus('${uname}', '${date}', 'present', false)" title="Mark Present" class="px-2 py-1 text-xs rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50 font-semibold">
                 Present
               </button>
@@ -4005,9 +4137,7 @@ async function loadAttendance(force = false) {
               <button onclick="setAgentAttendanceStatus('${uname}', '${date}', 'absent', false)" title="Mark Absent" class="px-2 py-1 text-xs rounded-lg border border-rose-300 text-rose-700 hover:bg-rose-50 font-semibold">
                 Absent
               </button>
-              <button onclick="unmarkAgentAttendance('${uname}', '${date}')" title="Unmark / Reset Attendance" class="px-2 py-1 text-xs rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-100 font-semibold">
-                Unmark
-              </button>
+              ${unmarkBtn}
               <button onclick="openOtpGeneratorModal('${uname}')" title="Manage OTP" class="px-2 py-1 text-xs rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold">
                 🔑 OTP
               </button>
@@ -4018,7 +4148,7 @@ async function loadAttendance(force = false) {
     }
 
     const summaryBanner = `
-      <div class="grid grid-cols-4 gap-3 mb-4 text-center">
+      <div class="grid grid-cols-5 gap-3 mb-4 text-center">
         <div class="p-3 bg-blue-50 border border-blue-100 rounded-xl">
           <div class="text-xs text-blue-600 font-semibold">Active Agents</div>
           <div class="text-xl font-bold text-blue-800">${activeCount}</div>
@@ -4035,6 +4165,10 @@ async function loadAttendance(force = false) {
           <div class="text-xs text-rose-600 font-semibold">Absent</div>
           <div class="text-xl font-bold text-rose-800">${absentCount}</div>
         </div>
+        <div class="p-3 bg-gray-50 border border-gray-200 rounded-xl">
+          <div class="text-xs text-gray-600 font-semibold">Unmarked</div>
+          <div class="text-xl font-bold text-gray-700">${unmarkedCount}</div>
+        </div>
       </div>
     `;
 
@@ -4046,48 +4180,23 @@ async function loadAttendance(force = false) {
   }
 }
 
-async function unmarkAgentAttendance(username, date) {
-  if (!username || !date) return;
-  const res = await Swal.fire({
-    title: 'Unmark Attendance?',
-    text: `Are you sure you want to reset attendance for ${username} on ${date}?`,
-    icon: 'warning',
-    showCancelButton: true,
-    confirmButtonColor: '#0FA88B',
-    cancelButtonColor: '#64748b',
-    confirmButtonText: 'Yes, Unmark'
-  });
-
-  if (!res.isConfirmed) return;
-
+async function setAgentAttendanceStatus(username, date, status, isHalfDay = false) {
   try {
-    await db.ref(`attendance/${username}/${date}`).remove();
-    const userSnap = await db.ref(`users/${username}`).once('value');
-    const uData = userSnap.val() || {};
-    if (uData.blocked_date === date || uData.is_blocked) {
+    if (status === 'unmarked') {
+      await db.ref(`attendance/${username}/${date}`).remove();
+
       await db.ref(`users/${username}`).update({
         is_blocked: false,
         blocked_date: null
       });
-    }
 
-    if (window.showToast) {
-      showToast(`Attendance unmarked for ${username}`, 'success');
-    } else {
-      Swal.fire('Unmarked', 'Attendance record cleared.', 'success');
-    }
-
-    if (typeof loadAttendance === 'function') {
+      invalidate('attendance', 'users');
+      showToast(`⚪ Unmarked ${username} for ${date}`, 'info');
       loadAttendance(true);
+      loadDashboard(true);
+      return;
     }
-  } catch (err) {
-    console.error('Error unmarking attendance:', err);
-    Swal.fire('Error', 'Failed to unmark attendance: ' + err.message, 'error');
-  }
-}
 
-async function setAgentAttendanceStatus(username, date, status, isHalfDay = false) {
-  try {
     const record = {
       status: status,
       timestamp: Date.now(),
@@ -4100,14 +4209,21 @@ async function setAgentAttendanceStatus(username, date, status, isHalfDay = fals
     await db.ref(`attendance/${username}/${date}`).update(record);
 
     if (status === 'absent') {
-      await db.ref(`users/${username}`).update({ is_blocked: true, blocked_date: date });
+      await db.ref(`users/${username}`).update({
+        is_blocked: true,
+        blocked_date: date
+      });
     } else {
-      await db.ref(`users/${username}`).update({ is_blocked: false, blocked_date: null });
+      await db.ref(`users/${username}`).update({
+        is_blocked: false,
+        blocked_date: null
+      });
     }
 
-    invalidate('attendance');
+    invalidate('attendance', 'users');
     showToast(`Updated ${username} to ${isHalfDay ? 'Half Day' : status}`, 'success');
     loadAttendance(true);
+    loadDashboard(true);
   } catch (e) {
     console.error(e);
     showToast('Failed to update status', 'error');
@@ -4390,34 +4506,321 @@ async function blockAgent(username, date) {
 }
 
 // ================================================================
-// SALARY / EARNINGS
+// SALARY / EARNINGS — Flipkart backend (Paid Cycle Snapshot + Undo)
 // ================================================================
-function setSalaryMode(mode) {
-  currentSalaryMode = mode;
 
-  $('salaryModeToday')?.classList.toggle('active', mode === 'today');
-  $('salaryModeSinceJoin')?.classList.toggle('active', mode === 'since_join');
-  $('salaryModeDate')?.classList.toggle('active', mode === 'date');
-
-  const wrapper = $('salaryDateWrapper');
-  if (wrapper) wrapper.style.display = mode === 'date' ? 'inline-block' : 'none';
-
-  const label = $('salaryModeLabel');
-
-  if (label) {
-    if (mode === 'today') {
-      label.textContent = "Today's Earnings";
-    } else if (mode === 'since_join') {
-      label.textContent = "Earnings from Joining Date to Today";
-    } else if (mode === 'date') {
-      const dateVal = getVal('salaryDate') || 'selected date';
-      label.textContent = `Earnings for ${dateVal}`;
-    }
-  }
-
-  loadSalaryData(true);
+// ---------- Cycle helpers ----------
+function getActivePaymentsForAgent(allPayments, agentUsername) {
+  const agentPays = allPayments[agentUsername] || {};
+  return Object.values(agentPays)
+    .filter(p => p.status !== 'UNDONE')
+    .sort((a, b) => {
+      const da = a.paymentDate || '';
+      const dbb = b.paymentDate || '';
+      if (da !== dbb) return dbb.localeCompare(da);
+      return (b.createdAt || 0) - (a.createdAt || 0);
+    });
 }
 
+function getLastActivePayment(allPayments, agentUsername) {
+  const list = getActivePaymentsForAgent(allPayments, agentUsername);
+  return list[0] || null;
+}
+
+function getPaymentHistoryForAgent(allPayments, agentUsername) {
+  const agentPays = allPayments[agentUsername] || {};
+  return Object.values(agentPays).sort((a, b) => {
+    const da = a.paymentDate || '';
+    const dbb = b.paymentDate || '';
+    if (da !== dbb) return dbb.localeCompare(da);
+    return (b.createdAt || 0) - (a.createdAt || 0);
+  });
+}
+
+function computeCycleRangeForAgent(mode, uData, lastActivePayment, selectedDate) {
+  const today = getLocalYMD();
+  const joinDateStr = uData.joinDate || null;
+
+  if (mode === 'today') {
+    return { start: today, end: today };
+  }
+  if (mode === 'date') {
+    const d = selectedDate || today;
+    return { start: d, end: d };
+  }
+  if (mode === 'since_join') {
+    return { start: joinDateStr || '2020-01-01', end: today };
+  }
+  if (mode === 'current_cycle') {
+    if (lastActivePayment && lastActivePayment.paymentDate) {
+      const nextDay = addDays(lastActivePayment.paymentDate, 1);
+      return { start: nextDay, end: today };
+    }
+    return { start: joinDateStr || '2020-01-01', end: today };
+  }
+  return { start: today, end: today };
+}
+
+function computeCycleTotals({ uname, uData, cycleStart, cycleEnd, allAttendance, pickupsByAgentDate, allAdjustments }) {
+  const salary = uData.salary || 0;
+  const pickupInc = uData.pickup_incentive || 0;
+  const rejectInc = uData.reject_incentive || 0;
+  const perDaySalary = salary / 30;
+
+  const joinDateObj = uData.joinDate ? new Date(uData.joinDate + 'T00:00:00') : null;
+
+  let totalBaseSalary = 0;
+  let totalPickupIncentive = 0;
+  let totalRejectIncentive = 0;
+  let totalBonus = 0;
+  let totalDeduction = 0;
+
+  let presentDays = 0;
+  let halfDays = 0;
+  let absentDays = 0;
+
+  let agentPickupCount = 0;
+  let agentRejectCount = 0;
+  let agentPendingCount = 0;
+  let agentHalfDayCount = 0;
+
+  let detailsHtml = '';
+  const pendingRejects = [];
+  const usedAdjustmentIds = [];
+
+  const userAttendance = allAttendance[uname] || {};
+
+  const startD = new Date(cycleStart + 'T00:00:00');
+  const endD = new Date(cycleEnd + 'T00:00:00');
+
+  let currentDate = new Date(startD);
+
+  while (currentDate <= endD) {
+    const dateStr = getLocalYMD(currentDate);
+
+    if (joinDateObj && currentDate < joinDateObj) {
+      currentDate.setDate(currentDate.getDate() + 1);
+      continue;
+    }
+
+    const att = userAttendance[dateStr] || {};
+    const isPresent = att.status === 'present';
+    const salaryCounted = att.salary_counted !== false;
+
+    if (isPresent && salaryCounted) {
+      if (att.half_day === true) {
+        totalBaseSalary += perDaySalary * 0.5;
+        halfDays++;
+        agentHalfDayCount++;
+      } else {
+        totalBaseSalary += perDaySalary;
+        presentDays++;
+      }
+    } else if (att.status === 'absent') {
+      absentDays++;
+    }
+
+    const key = uname + '|' + dateStr;
+    const dayPickups = pickupsByAgentDate[key] || [];
+
+    for (const ord of dayPickups) {
+      if (ord.status === 'pickup') {
+        totalPickupIncentive += pickupInc;
+        agentPickupCount++;
+      }
+      if (ord.status === 'rejected' && Boolean(ord.incentive_approved)) {
+        totalRejectIncentive += rejectInc;
+        agentRejectCount++;
+      }
+      if (ord.status === 'rejected' && !Boolean(ord.incentive_approved)) {
+        pendingRejects.push({ id: ord.orderId || ord.id, ...ord });
+      }
+      if (ord.status === 'reschedule') {
+        agentPendingCount++;
+      }
+    }
+
+    if (isPresent || att.status === 'absent') {
+      let icon;
+      if (isPresent) icon = att.half_day === true ? '🌗' : '✅';
+      else icon = att.blocked ? '🔒' : '❌';
+      detailsHtml += `<span class="text-xs mx-0.5" title="${dateStr}">${icon}</span>`;
+    }
+
+    currentDate.setDate(currentDate.getDate() + 1);
+  }
+
+  // ADJUSTMENTS — all pending (unsettled) + non-reverted count in every mode
+  const agentAdjustments = Object.values(allAdjustments[uname] || {});
+  for (const adj of agentAdjustments) {
+    if (adj.status === 'REVERTED') continue;
+    if (adj.settledInCycle) continue;
+
+    const amt = Number(adj.amount) || 0;
+    if (adj.effect === 'add') totalBonus += amt;
+    else if (adj.effect === 'deduct') totalDeduction += amt;
+
+    usedAdjustmentIds.push(adj.id);
+  }
+
+  const grandTotal = Math.max(0, totalBaseSalary + totalBonus - totalDeduction);
+
+  const uniquePending = [];
+  const seen = new Set();
+  for (const pr of pendingRejects) {
+    if (!seen.has(pr.id)) { seen.add(pr.id); uniquePending.push(pr); }
+  }
+
+  return {
+    totalBaseSalary,
+    totalBonus,
+    totalDeduction,
+    grandTotal,
+    totalPickupIncentive,
+    totalRejectIncentive,
+    agentPickupCount,
+    agentRejectCount,
+    agentPendingCount,
+    agentHalfDayCount,
+    presentDays,
+    halfDays,
+    absentDays,
+    detailsHtml,
+    uniquePending,
+    usedAdjustmentIds
+  };
+}
+
+// ---------- Premium salary card ----------
+function buildSalaryCard({
+  uname, uData,
+  cycleStart, cycleEnd, lastPaidDate, mode,
+  totals,
+  cycleAlreadyPaid, pendingAmount,
+  joinDateDisplay, periodAttr,
+  paidCyclesCount
+}) {
+  const t = totals;
+
+  const fullyPaid = pendingAmount <= 0 && t.grandTotal > 0;
+  const partiallyPaid = cycleAlreadyPaid > 0 && pendingAmount > 0;
+
+  let statusBadge = '<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800">🔴 UNPAID</span>';
+  if (fullyPaid) statusBadge = '<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">✅ FULLY PAID</span>';
+  else if (partiallyPaid) statusBadge = '<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">⏳ PARTIALLY PAID</span>';
+
+  const cycleLabel = cycleStart === cycleEnd
+    ? cycleStart
+    : `${cycleStart} → ${cycleEnd}`;
+
+  return `
+    <div class="glass rounded-2xl p-5 shadow-sm border border-gray-100 salary-summary-card">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <div>
+          <span class="font-bold text-gray-800 text-base">${uData.name || uname}</span>
+          <span class="text-sm text-gray-500 ml-1">(${uname})</span>
+          <span class="text-xs text-gray-400 ml-2">Joined: ${joinDateDisplay}</span>
+        </div>
+        <div class="flex items-center gap-2">
+          ${statusBadge}
+          <span class="text-[10px] text-gray-400">${paidCyclesCount} paid cycle${paidCyclesCount !== 1 ? 's' : ''}</span>
+        </div>
+      </div>
+
+      <div class="mb-3 px-3 py-2 rounded-xl bg-indigo-50 border border-indigo-100 flex flex-wrap items-center justify-between gap-2 text-xs">
+        <span class="text-indigo-700 font-semibold">📅 Cycle: <strong>${cycleLabel}</strong></span>
+        ${lastPaidDate ? `<span class="text-gray-500">Last paid: <strong>${lastPaidDate}</strong></span>` : '<span class="text-gray-500">No payment yet</span>'}
+      </div>
+
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+        <div class="bg-gray-50 border border-gray-200 p-3 rounded-xl">
+          <div class="text-[10px] text-gray-500 font-bold uppercase tracking-wide">Base Salary</div>
+          <div class="text-base font-bold text-gray-800 mt-1">${formatINR(t.totalBaseSalary)}</div>
+          <div class="text-[10px] text-gray-400 mt-0.5">${t.presentDays} full · ${t.halfDays} half</div>
+        </div>
+        <div class="bg-blue-50 border border-blue-200 p-3 rounded-xl">
+          <div class="text-[10px] text-blue-600 font-bold uppercase tracking-wide">+ Bonus</div>
+          <div class="text-base font-bold text-blue-700 mt-1">+${formatINR(t.totalBonus)}</div>
+        </div>
+        <div class="bg-rose-50 border border-rose-200 p-3 rounded-xl">
+          <div class="text-[10px] text-rose-600 font-bold uppercase tracking-wide">− Deduction</div>
+          <div class="text-base font-bold text-rose-700 mt-1">-${formatINR(t.totalDeduction)}</div>
+        </div>
+        <div class="bg-emerald-50 border-2 border-emerald-300 p-3 rounded-xl">
+          <div class="text-[10px] text-emerald-700 font-bold uppercase tracking-wide">Grand Total</div>
+          <div class="text-lg font-black text-emerald-800 mt-1">${formatINR(t.grandTotal)}</div>
+        </div>
+      </div>
+
+      <div class="mb-3 p-3 rounded-xl bg-amber-50 border border-dashed border-amber-300">
+        <div class="flex items-center gap-2 mb-2">
+          <span class="text-[10px] font-bold text-amber-700 uppercase tracking-wide">💡 Incentives</span>
+          <span class="text-[9px] px-2 py-0.5 rounded-full bg-amber-200 text-amber-900 font-bold">Excluded from Grand Total</span>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div class="bg-white p-2 rounded-lg border border-amber-200">
+            <div class="text-[10px] text-gray-500 font-semibold">📦 Pickup Incentive</div>
+            <div class="text-sm font-bold text-green-700">${formatINR(t.totalPickupIncentive)}</div>
+            <div class="text-[10px] text-gray-400">${t.agentPickupCount} pickups</div>
+          </div>
+          <div class="bg-white p-2 rounded-lg border border-amber-200">
+            <div class="text-[10px] text-gray-500 font-semibold">❌ Reject Incentive</div>
+            <div class="text-sm font-bold text-amber-700">${formatINR(t.totalRejectIncentive)}</div>
+            <div class="text-[10px] text-gray-400">${t.agentRejectCount} rejects</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mb-3 grid grid-cols-2 gap-2">
+        <div class="p-3 rounded-xl bg-gray-100 border border-gray-200">
+          <div class="text-[10px] text-gray-500 font-bold uppercase tracking-wide">Already Paid (this cycle)</div>
+          <div class="text-base font-bold text-gray-800 mt-1">${formatINR(cycleAlreadyPaid)}</div>
+        </div>
+        <div class="p-3 rounded-xl ${pendingAmount > 0 ? 'bg-rose-50 border border-rose-200' : 'bg-emerald-50 border border-emerald-200'}">
+          <div class="text-[10px] font-bold uppercase tracking-wide ${pendingAmount > 0 ? 'text-rose-600' : 'text-emerald-600'}">Pending / Current</div>
+          <div class="text-base font-black mt-1 ${pendingAmount > 0 ? 'text-rose-700' : 'text-emerald-700'}">${formatINR(pendingAmount)}</div>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2">
+        <button onclick="openPaidModal('${uname}')" class="px-4 py-2 bg-gradient-to-r from-emerald-500 to-green-600 text-white rounded-xl text-xs font-bold shadow-md hover:shadow-lg transition flex items-center gap-1.5">
+          💰 Mark as Paid
+        </button>
+        <button onclick="openPaymentHistoryModal('${uname}')" class="px-4 py-2 bg-indigo-50 text-indigo-700 rounded-xl text-xs font-bold border border-indigo-200 hover:bg-indigo-100 transition flex items-center gap-1.5">
+          📜 Paid History
+        </button>
+        <button onclick="openAddAdjustmentModal('${uname}')" class="px-3 py-2 bg-gray-50 text-gray-700 rounded-xl text-xs font-semibold border border-gray-200 hover:bg-gray-100 transition">
+          ➕ Adjustment
+        </button>
+        <button onclick="openAdjustmentHistoryModal('${uname}')" class="px-3 py-2 bg-purple-50 text-purple-700 rounded-xl text-xs font-bold border border-purple-200 hover:bg-purple-100 transition">
+          📋 Adj History
+        </button>
+        <button onclick='viewAgentActivityWithPeriod("${uname}", ${periodAttr})' class="px-3 py-2 bg-gray-50 text-gray-700 rounded-xl text-xs font-semibold border border-gray-200 hover:bg-gray-100 transition">
+          📊 Activity
+        </button>
+      </div>
+
+      <div class="mt-2 text-xs text-gray-400">Attendance: ${t.detailsHtml}</div>
+
+      ${t.uniquePending.length > 0 ? `
+        <div class="mt-2 pt-2 border-t border-gray-200">
+          <p class="text-xs font-bold text-amber-600">⏳ Pending Reject Approvals (${t.uniquePending.length})</p>
+          <div class="flex flex-wrap gap-1 mt-1">
+            ${t.uniquePending.map(pr => `
+              <span class="text-xs bg-gray-100 px-2 py-0.5 rounded flex items-center gap-1">
+                ${pr.orderId || pr.id}
+                <button onclick="toggleRejectApproval('${pr.id}', true)" class="text-green-600 font-bold">✅</button>
+                <button onclick="toggleRejectApproval('${pr.id}', false)" class="text-red-600 font-bold">❌</button>
+              </span>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+// ---------- Main salary loader ----------
 async function loadSalaryData(force = false) {
   const mode = currentSalaryMode || 'today';
   const container = $('salaryContainer');
@@ -4427,13 +4830,16 @@ async function loadSalaryData(force = false) {
   container.innerHTML = `<div class="text-center py-4"><span class="spinner-sm"></span> Calculating...</div>`;
 
   try {
-    const [users, pickups, allAttendance, allAdjustmentsSnap] = await Promise.all([
+    const [users, pickups, allAttendance, allAdjustmentsSnap, allPaymentsSnap] = await Promise.all([
       getData('users', force),
       getData('pickups', force),
       getData('attendance', force),
-      db.ref('adjustments').once('value')
+      db.ref('adjustments').once('value'),
+      db.ref('salary_payments').once('value')
     ]);
+
     const allAdjustments = allAdjustmentsSnap.val() || {};
+    const allPayments = allPaymentsSnap.val() || {};
 
     const agents = Object.fromEntries(
       Object.entries(users).filter(([_, u]) => (u.role || 'agent') === 'agent' && u.is_active !== false)
@@ -4441,336 +4847,85 @@ async function loadSalaryData(force = false) {
 
     if (!Object.keys(agents).length) {
       container.innerHTML = `<div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No active agents</p></div>`;
-
       setText('globalPickups', '0');
       setText('globalRejects', '0');
       setText('globalPending', '0');
       setText('globalEarnings', '₹0');
-
       return;
     }
 
-    const today = getLocalYMD();
-
-    let dateFilterFn;
-    let periodInfo = { mode };
-
-    if (mode === 'today') {
-      dateFilterFn = (ordDate) => ordDate === today;
-      periodInfo.date = today;
-    } else if (mode === 'since_join') {
-      periodInfo.mode = 'since_join';
-    } else if (mode === 'date') {
-      const dateInput = $('salaryDate');
-      let dateVal = dateInput ? dateInput.value : '';
-
-      if (!dateVal) {
-        dateVal = today;
-        if (dateInput) dateInput.value = dateVal;
-      }
-
-      dateFilterFn = (ordDate) => ordDate === dateVal;
-      periodInfo.date = dateVal;
-    } else {
-      dateFilterFn = () => true;
-      periodInfo.mode = 'all';
-    }
-
-    currentSalaryPeriod = periodInfo;
-
     const pickupsByAgentDate = {};
-    const allRejectedOrders = [];
-
-    let globalPickup = 0;
-    let globalReject = 0;
-    let globalPending = 0;
-    let globalEarnings = 0;
-
-    const rejectDateFilter = (ordDate) => {
-      if (mode === 'today') return ordDate === today;
-      if (mode === 'date') return ordDate === periodInfo.date;
-      return true;
-    };
-
-    for (const [oid, ord] of Object.entries(pickups)) {
-      if (!ord.timestamp) continue;
-      if (ord.status === 'on_hold') continue;
-
-      const agent = ord.agent || 'unknown';
-      if (!agents[agent]) continue;
-
-      const ordDate = getLocalYMD(new Date(ord.timestamp));
-
-      if (mode === 'today' || mode === 'date') {
-        if (!dateFilterFn(ordDate)) continue;
-      }
-
-      const key = agent + '|' + ordDate;
+    Object.values(pickups).forEach(ord => {
+      if (!ord.timestamp) return;
+      if (ord.status === 'on_hold') return;
+      if (!ord.agent) return;
+      const ds = getLocalYMD(new Date(ord.timestamp));
+      const key = ord.agent + '|' + ds;
       if (!pickupsByAgentDate[key]) pickupsByAgentDate[key] = [];
       pickupsByAgentDate[key].push(ord);
-
-      if (ord.status === 'rejected' && !Boolean(ord.incentive_approved) && rejectDateFilter(ordDate)) {
-        allRejectedOrders.push({ id: oid, ...ord });
-      }
-    }
+    });
 
     let html = '';
-    let grandTotal = 0;
+    let grandTotalAll = 0;
+    let globalPickup = 0, globalReject = 0, globalPending = 0, globalEarnings = 0;
+
+    const selectedDate = mode === 'date' ? (getVal('salaryDate') || getLocalYMD()) : null;
 
     for (const [uname, uData] of Object.entries(agents)) {
-      const salary = uData.salary || 0;
-      const pickupInc = uData.pickup_incentive || 0;
-      const rejectInc = uData.reject_incentive || 0;
-      const perDaySalary = salary / 30;
+      const lastActivePayment = getLastActivePayment(allPayments, uname);
+      const lastPaidDate = lastActivePayment ? lastActivePayment.paymentDate : null;
 
-      const joinDateStr = uData.joinDate || null;
-      let joinDateObj = joinDateStr ? new Date(joinDateStr + 'T00:00:00') : null;
+      const { start: cycleStart, end: cycleEnd } = computeCycleRangeForAgent(mode, uData, lastActivePayment, selectedDate);
 
-      let startDate;
-      let endDate;
+      const totals = computeCycleTotals({
+        uname, uData,
+        cycleStart, cycleEnd,
+        allAttendance,
+        pickupsByAgentDate,
+        allAdjustments
+      });
 
-      if (mode === 'since_join') {
-        if (joinDateObj) {
-          startDate = new Date(joinDateObj);
-          endDate = new Date();
-        } else {
-          startDate = new Date('2020-01-01T00:00:00');
-          endDate = new Date();
-        }
-      } else if (mode === 'today' || mode === 'date') {
-        startDate = new Date((mode === 'date' ? periodInfo.date : today) + 'T00:00:00');
-        endDate = new Date(startDate);
-      } else {
-        startDate = new Date(today + 'T00:00:00');
-        endDate = new Date(today + 'T00:00:00');
-      }
+      const agentPaysActive = getActivePaymentsForAgent(allPayments, uname);
+      const cycleAlreadyPaid = agentPaysActive
+        .filter(p => p.paymentDate && p.paymentDate >= cycleStart && p.paymentDate <= cycleEnd)
+        .reduce((s, p) => s + (Number(p.amount) || 0), 0);
 
-      let totalBaseSalary = 0;
-      let totalPickupIncentive = 0;
-      let totalRejectIncentive = 0;
-      let detailsHtml = '';
-      let pendingRejects = [];
+      const pendingAmount = Math.max(0, totals.grandTotal - cycleAlreadyPaid);
 
-      const userAttendance = allAttendance[uname] || {};
+      grandTotalAll += totals.grandTotal;
+      globalEarnings += totals.grandTotal;
+      globalPickup += totals.agentPickupCount;
+      globalReject += totals.agentRejectCount;
+      globalPending += totals.agentPendingCount;
 
-      let agentPickupCount = 0;
-      let agentRejectCount = 0;
-      let agentPendingCount = 0;
-      let agentHalfDayCount = 0;
+      const joinDateDisplay = uData.joinDate || '—';
+      const paidCyclesCount = getActivePaymentsForAgent(allPayments, uname).length;
 
-      let currentDate = new Date(startDate);
+      const periodAttr = JSON.stringify({
+        mode: 'current_cycle',
+        cycleStart,
+        cycleEnd,
+        lastPaidDate
+      }).replace(/"/g, '&quot;');
 
-      while (currentDate <= endDate) {
-        const dateStr = getLocalYMD(currentDate);
-
-        if (joinDateObj && currentDate < joinDateObj) {
-          currentDate.setDate(currentDate.getDate() + 1);
-          continue;
-        }
-
-        const att = userAttendance[dateStr] || {};
-
-        const isPresent = att.status === 'present';
-        const salaryCounted = att.salary_counted !== false;
-
-        if (isPresent && salaryCounted) {
-          let dayBaseSalary = perDaySalary;
-
-          if (att.half_day === true) {
-            dayBaseSalary = perDaySalary * 0.5;
-            agentHalfDayCount++;
-          }
-
-          totalBaseSalary += dayBaseSalary;
-        }
-
-        const key = uname + '|' + dateStr;
-        const dayPickups = pickupsByAgentDate[key] || [];
-
-        let dayPickupInc = 0;
-        let dayRejectInc = 0;
-
-        for (const ord of dayPickups) {
-          if (ord.status === 'pickup') {
-            dayPickupInc += pickupInc;
-            agentPickupCount++;
-          }
-
-          if (ord.status === 'rejected' && Boolean(ord.incentive_approved)) {
-            dayRejectInc += rejectInc;
-            agentRejectCount++;
-          }
-
-          if (ord.status === 'rejected' && !Boolean(ord.incentive_approved)) {
-            pendingRejects.push({ id: ord.orderId || ord.id, ...ord });
-          }
-
-          if (ord.status === 'reschedule') {
-            agentPendingCount++;
-          }
-        }
-
-        totalPickupIncentive += dayPickupInc;
-        totalRejectIncentive += dayRejectInc;
-
-        if (isPresent || att.status === 'absent') {
-          let statusIcon;
-
-          if (isPresent) {
-            statusIcon = att.half_day === true ? '🌗' : '✅';
-          } else {
-            statusIcon = att.blocked ? '🔒' : '❌';
-          }
-
-          detailsHtml += `<span class="text-xs mx-0.5" title="${dateStr}${att.half_day === true ? ' (Half Day)' : ''}">${statusIcon}</span>`;
-        }
-
-        currentDate.setDate(currentDate.getDate() + 1);
-      }
-
-      const uniquePending = [];
-      const seen = new Set();
-
-      for (const pr of pendingRejects) {
-        if (!seen.has(pr.id)) {
-          seen.add(pr.id);
-          uniquePending.push(pr);
-        }
-      }
-
-      const agentAdjustments = Object.values(allAdjustments[uname] || {});
-      let totalBonusIncentives = 0;
-      let totalDeductions = 0;
-
-      for (const adj of agentAdjustments) {
-        const adjDate = adj.date;
-        let inPeriod = true;
-        if (mode === 'today' || mode === 'date') {
-          inPeriod = (adjDate === (mode === 'date' ? periodInfo.date : today));
-        } else if (mode === 'since_join' && joinDateObj) {
-          inPeriod = new Date(adjDate + 'T00:00:00') >= joinDateObj;
-        }
-
-        if (inPeriod) {
-          const amt = Number(adj.amount) || 0;
-          if (adj.effect === 'add') {
-            totalBonusIncentives += amt;
-          } else if (adj.effect === 'deduct') {
-            totalDeductions += amt;
-          }
-        }
-      }
-
-      const grossEarnings = totalBaseSalary + totalPickupIncentive + totalRejectIncentive + totalBonusIncentives;
-      const total = Math.max(0, grossEarnings - totalDeductions);
-
-      grandTotal += total;
-      globalEarnings += total;
-      globalPickup += agentPickupCount;
-      globalReject += agentRejectCount;
-      globalPending += agentPendingCount;
-
-      let pendingRejectsHtml = '';
-
-      if (uniquePending.length > 0) {
-        pendingRejectsHtml = `
-          <div class="mt-2 pt-2 border-t border-gray-200">
-            <p class="text-xs font-bold text-amber-600">⏳ Pending Reject Approvals (${uniquePending.length})</p>
-            <div class="flex flex-wrap gap-1 mt-1">
-              ${uniquePending.map(pr => `
-                <span class="text-xs bg-gray-100 px-2 py-0.5 rounded flex items-center gap-1">
-                  ${pr.orderId || pr.id}
-                  <button onclick="toggleRejectApproval('${pr.id}', true)" class="text-green-600 hover:text-green-800 font-bold text-xs">✅</button>
-                  <button onclick="toggleRejectApproval('${pr.id}', false)" class="text-red-600 hover:text-red-800 font-bold text-xs">❌</button>
-                </span>
-              `).join('')}
-            </div>
-          </div>
-        `;
-      }
-
-      const joinDateDisplay = joinDateObj ? getLocalYMD(joinDateObj) : '—';
-      const periodAttr = JSON.stringify(currentSalaryPeriod).replace(/"/g, '&quot;');
-
-      html += `
-        <div class="glass rounded-2xl p-5 shadow-sm border border-gray-100 salary-summary-card">
-          <div class="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <span class="font-bold text-gray-800 cursor-pointer hover:text-indigo-600" onclick="viewAgentActivityWithPeriod('${uname}', ${periodAttr})">${uData.name}</span>
-              <span class="text-sm text-gray-500">(${uname})</span>
-              <span class="text-xs text-gray-400 ml-2">Joined: ${joinDateDisplay}</span>
-              <button onclick="viewAgentActivityWithPeriod('${uname}', ${periodAttr})" class="btn-action activity text-xs ml-2"><i data-lucide="activity"></i> Activity</button>
-              <span class="text-xs text-gray-400 ml-2">📦 ${agentPickupCount} | ❌ ${agentRejectCount} | ⏳ ${agentPendingCount} | 🌗 ${agentHalfDayCount}</span>
-            </div>
-            <div class="text-sm font-bold text-indigo-600">${formatINR(total)}</div>
-          </div>
-
-          <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 mt-2 text-xs">
-            <div class="bg-gray-50 p-2 rounded"><span class="text-gray-500">Base Salary</span><br><span class="font-bold text-gray-800">${formatINR(totalBaseSalary)}</span></div>
-            <div class="bg-green-50 p-2 rounded"><span class="text-gray-500">Pickup Inc.</span><br><span class="font-bold text-green-700">${formatINR(totalPickupIncentive)}</span></div>
-            <div class="bg-amber-50 p-2 rounded"><span class="text-gray-500">Reject Inc.</span><br><span class="font-bold text-amber-700">${formatINR(totalRejectIncentive)}</span></div>
-            <div class="bg-blue-50 p-2 rounded"><span class="text-blue-600">Bonus/Add</span><br><span class="font-bold text-blue-700">+${formatINR(totalBonusIncentives)}</span></div>
-            <div class="bg-rose-50 p-2 rounded"><span class="text-rose-600">Deductions</span><br><span class="font-bold text-rose-700">-${formatINR(totalDeductions)}</span></div>
-          </div>
-          <div class="flex items-center gap-2 mt-2">
-            <button onclick="openAddAdjustmentModal('${uname}')" class="text-xs px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-lg hover:bg-indigo-100 font-semibold flex items-center gap-1">
-              ➕ Add Adjustment
-            </button>
-            <button onclick="openAdjustmentHistoryModal('${uname}')" class="text-xs px-2.5 py-1 bg-gray-50 text-gray-600 rounded-lg hover:bg-gray-100 font-medium">
-              📋 History
-            </button>
-          </div>
-
-          <div class="mt-2 text-xs text-gray-400">Attendance: ${detailsHtml}</div>
-
-          ${pendingRejectsHtml}
-        </div>
-      `;
+      html += buildSalaryCard({
+        uname, uData,
+        cycleStart, cycleEnd, lastPaidDate, mode,
+        totals,
+        cycleAlreadyPaid,
+        pendingAmount,
+        joinDateDisplay,
+        periodAttr,
+        paidCyclesCount
+      });
     }
 
     setText('globalPickups', globalPickup);
     setText('globalRejects', globalReject);
     setText('globalPending', globalPending);
-    setText('globalEarnings', formatINR(globalEarnings));
+    setText('globalEarnings', formatINR(grandTotalAll));
 
-    const filteredAllPending = [];
-    const seenAll = new Set();
-
-    for (const pr of allRejectedOrders) {
-      if (!seenAll.has(pr.id)) {
-        seenAll.add(pr.id);
-        filteredAllPending.push(pr);
-      }
-    }
-
-    if (filteredAllPending.length > 0) {
-      html += `
-        <div class="glass rounded-2xl p-5 shadow-sm border border-amber-200 bg-amber-50">
-          <h4 class="font-bold text-amber-700 mb-2">📋 Pending Reject Approvals (${filteredAllPending.length})</h4>
-          <div class="flex flex-wrap gap-2">
-            ${filteredAllPending.map(pr => {
-              const ordDate = pr.timestamp ? getLocalYMD(new Date(pr.timestamp)) : '—';
-
-              return `
-                <span class="text-sm bg-white px-3 py-1 rounded shadow flex items-center gap-2">
-                  <span class="font-mono">${pr.orderId || pr.id}</span>
-                  <span class="text-xs text-gray-500">(${pr.agent || '—'})</span>
-                  <span class="text-xs text-gray-400">${ordDate}</span>
-                  <button onclick="toggleRejectApproval('${pr.id}', true)" class="btn-action approve text-xs py-0.5 px-2">
-                    <i data-lucide="check-circle"></i> Approve
-                  </button>
-                  <button onclick="toggleRejectApproval('${pr.id}', false)" class="btn-action delete text-xs py-0.5 px-2">
-                    <i data-lucide="x-circle"></i> Reject
-                  </button>
-                </span>
-              `;
-            }).join('')}
-          </div>
-        </div>
-      `;
-    }
-
-    html += `<div class="text-right font-bold text-xl mt-4">Grand Total: ${formatINR(grandTotal)}</div>`;
+    html += `<div class="text-right font-bold text-xl mt-4">Grand Total (All Agents): ${formatINR(grandTotalAll)}</div>`;
 
     container.innerHTML = html;
     refreshIcons();
@@ -4783,7 +4938,948 @@ async function loadSalaryData(force = false) {
 
 async function recalculateAllSalary() {
   showToast('🔄 Recalculating...', 'info');
+  invalidate('salary_payments');
   await loadSalaryData(true);
+}
+
+function setSalaryMode(mode) {
+  currentSalaryMode = mode;
+
+  $('salaryModeToday')?.classList.toggle('active', mode === 'today');
+  $('salaryModeSinceJoin')?.classList.toggle('active', mode === 'since_join');
+  $('salaryModeDate')?.classList.toggle('active', mode === 'date');
+  $('salaryModeCurrentCycle')?.classList.toggle('active', mode === 'current_cycle');
+
+  const wrapper = $('salaryDateWrapper');
+  if (wrapper) wrapper.style.display = mode === 'date' ? 'inline-block' : 'none';
+
+  const label = $('salaryModeLabel');
+
+  if (label) {
+    if (mode === 'today') {
+      label.textContent = "Today's Earnings";
+    } else if (mode === 'since_join') {
+      label.textContent = "Complete Record — Since Joining Date";
+    } else if (mode === 'date') {
+      const dateVal = getVal('salaryDate') || 'selected date';
+      label.textContent = `Earnings for ${dateVal}`;
+    } else if (mode === 'current_cycle') {
+      label.textContent = "Current Cycle — Since Last Payment";
+    }
+  }
+
+  loadSalaryData(true);
+}
+
+// ---------- Mark as Paid (with full snapshot) ----------
+async function openPaidModal(agentUsername) {
+  if (!agentUsername) return;
+
+  const users = await getData('users', false);
+  const uData = users[agentUsername];
+  if (!uData) { showToast('Agent not found', 'error'); return; }
+
+  const paymentsSnap = await db.ref('salary_payments/' + agentUsername).once('value');
+  const agentPayments = paymentsSnap.val() || {};
+
+  const activePayments = Object.values(agentPayments)
+    .filter(p => p.status !== 'UNDONE')
+    .sort((a, b) => {
+      const da = a.paymentDate || '';
+      const dbb = b.paymentDate || '';
+      if (da !== dbb) return dbb.localeCompare(da);
+      return (b.createdAt || 0) - (a.createdAt || 0);
+    });
+  const lastActivePayment = activePayments[0] || null;
+  const lastPaidDate = lastActivePayment ? lastActivePayment.paymentDate : null;
+
+  const today = getLocalYMD();
+  const joinDateStr = uData.joinDate || null;
+  const cycleStart = lastPaidDate ? addDays(lastPaidDate, 1) : (joinDateStr || '2020-01-01');
+  const cycleEnd = today;
+
+  const [pickups, allAttendance, allAdjustmentsSnap] = await Promise.all([
+    getData('pickups', false),
+    getData('attendance', false),
+    db.ref('adjustments').once('value')
+  ]);
+  const allAdjustments = allAdjustmentsSnap.val() || {};
+
+  const pickupsByAgentDate = {};
+  Object.values(pickups).forEach(ord => {
+    if (!ord.timestamp || ord.status === 'on_hold' || !ord.agent) return;
+    const ds = getLocalYMD(new Date(ord.timestamp));
+    const key = ord.agent + '|' + ds;
+    if (!pickupsByAgentDate[key]) pickupsByAgentDate[key] = [];
+    pickupsByAgentDate[key].push(ord);
+  });
+
+  const totals = computeCycleTotals({
+    uname: agentUsername, uData,
+    cycleStart, cycleEnd,
+    allAttendance,
+    pickupsByAgentDate,
+    allAdjustments
+  });
+
+  const alreadyPaid = activePayments
+    .filter(p => p.paymentDate && p.paymentDate >= cycleStart && p.paymentDate <= cycleEnd)
+    .reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  const pending = Math.max(0, totals.grandTotal - alreadyPaid);
+
+  const step1 = await Swal.fire({
+    title: '💰 Mark Salary as Paid?',
+    html: `
+      <div class="text-left text-sm space-y-2">
+        <p class="text-gray-600">Are you sure you want to record a payment for:</p>
+        <p class="font-bold text-lg text-gray-800">${uData.name || agentUsername}</p>
+        <div class="bg-gray-50 p-3 rounded-xl border border-gray-200">
+          <div class="flex justify-between text-xs"><span>Cycle:</span><strong>${cycleStart} → ${cycleEnd}</strong></div>
+          <div class="flex justify-between text-xs mt-1"><span>Base Salary:</span><strong>${formatINR(totals.totalBaseSalary)}</strong></div>
+          <div class="flex justify-between text-xs mt-1"><span>Bonus:</span><strong class="text-blue-600">+${formatINR(totals.totalBonus)}</strong></div>
+          <div class="flex justify-between text-xs mt-1"><span>Deduction:</span><strong class="text-rose-600">-${formatINR(totals.totalDeduction)}</strong></div>
+          <div class="flex justify-between text-xs mt-1 pt-1 border-t border-gray-200"><span>Grand Total:</span><strong>${formatINR(totals.grandTotal)}</strong></div>
+          ${alreadyPaid > 0 ? `<div class="flex justify-between text-xs mt-1 text-gray-600"><span>Already Paid:</span><strong>${formatINR(alreadyPaid)}</strong></div>` : ''}
+          <div class="flex justify-between text-sm mt-2 pt-2 border-t border-gray-200"><span class="font-bold">Pending:</span><strong class="text-rose-600">${formatINR(pending)}</strong></div>
+        </div>
+        <p class="text-[11px] text-gray-500 font-semibold mt-2">✔️ Mark as Paid → cycle will close & a new fresh cycle starts automatically.</p>
+        <p class="text-[11px] text-gray-400">Pickup/Reject incentives are excluded from Grand Total. Can be undone anytime.</p>
+      </div>
+    `,
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonText: 'Yes, Continue',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: '#059669',
+    cancelButtonColor: '#64748b'
+  });
+
+  if (!step1.isConfirmed) return;
+
+  const step2 = await Swal.fire({
+    title: '💵 Enter Paid Amount',
+    html: `
+      <div class="text-left text-sm space-y-3">
+        <p class="text-gray-500 text-xs">Enter the amount you are paying now:</p>
+        <div>
+          <label class="block font-semibold text-gray-700 mb-1 text-xs">Amount (₹)</label>
+          <input type="number" id="paid_amount" class="swal2-input" placeholder="Enter amount" min="1" value="${pending || totals.grandTotal}">
+        </div>
+        <div>
+          <label class="block font-semibold text-gray-700 mb-1 text-xs">Payment Date</label>
+          <input type="date" id="paid_date" class="swal2-input" value="${today}">
+        </div>
+        <div>
+          <label class="block font-semibold text-gray-700 mb-1 text-xs">Note (optional)</label>
+          <input type="text" id="paid_note" class="swal2-input" placeholder="e.g. UPI transfer">
+        </div>
+        <p class="text-[11px] text-gray-400">ℹ️ After payment, a new cycle will start the next day.</p>
+      </div>
+    `,
+    showCancelButton: true,
+    confirmButtonText: '✅ Confirm Payment',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: '#059669',
+    cancelButtonColor: '#64748b',
+    preConfirm: () => {
+      const amt = parseFloat(document.getElementById('paid_amount').value);
+      const dt = document.getElementById('paid_date').value;
+      const note = document.getElementById('paid_note').value.trim();
+      if (!amt || amt <= 0) { Swal.showValidationMessage('Enter a valid amount'); return false; }
+      if (!dt) { Swal.showValidationMessage('Select payment date'); return false; }
+      return { amt, dt, note };
+    }
+  });
+
+  if (!step2.isConfirmed) return;
+  const { amt, dt, note } = step2.value;
+
+  try {
+    const payId = 'pay_' + Date.now();
+    const entry = {
+      id: payId,
+      agent: agentUsername,
+      amount: Number(amt),
+      paymentDate: dt,
+      note: note || '',
+
+      cycleStartDate: cycleStart,
+      cycleEndDate: cycleEnd,
+      cycleBaseSalary: totals.totalBaseSalary,
+      cycleBonus: totals.totalBonus,
+      cycleDeduction: totals.totalDeduction,
+      cycleGrandTotal: totals.grandTotal,
+      cyclePickupIncentive: totals.totalPickupIncentive,
+      cycleRejectIncentive: totals.totalRejectIncentive,
+      cyclePickupCount: totals.agentPickupCount,
+      cycleRejectCount: totals.agentRejectCount,
+      cycleHalfDayCount: totals.agentHalfDayCount,
+      cyclePresentDays: totals.presentDays,
+      cycleHalfDays: totals.halfDays,
+      cycleAbsentDays: totals.absentDays,
+      cycleAdjustmentIds: totals.usedAdjustmentIds || [],
+
+      status: 'PAID',
+      createdAt: Date.now(),
+      createdBy: 'admin'
+    };
+
+    await db.ref('salary_payments/' + agentUsername + '/' + payId).set(entry);
+
+    if (totals.usedAdjustmentIds && totals.usedAdjustmentIds.length) {
+      const adjUpdates = {};
+      for (const adjId of totals.usedAdjustmentIds) {
+        adjUpdates[`adjustments/${agentUsername}/${adjId}/settledInCycle`] = payId;
+        adjUpdates[`adjustments/${agentUsername}/${adjId}/settledAt`] = Date.now();
+      }
+      await db.ref().update(adjUpdates);
+    }
+
+    invalidate('salary_payments');
+    showToast(`✅ Payment of ${formatINR(amt)} recorded`, 'success');
+    showToast(`🔄 Cycle closed. New cycle starts from ${addDays(dt, 1)}`, 'info', 4500);
+
+    loadSalaryData(true);
+    loadDashboard(true);
+  } catch (e) {
+    console.error(e);
+    showToast('Failed to save payment', 'error');
+  }
+}
+
+// ---------- Undo Paid Cycle ----------
+async function undoPaidCycle(agentUsername, payId) {
+  if (!agentUsername || !payId) return;
+
+  const snap = await db.ref(`salary_payments/${agentUsername}/${payId}`).once('value');
+  const entry = snap.val();
+
+  if (!entry) {
+    showToast('Payment record not found', 'error');
+    return;
+  }
+
+  if (entry.status === 'UNDONE') {
+    showToast('Already undone', 'info');
+    return;
+  }
+
+  const confirm = await Swal.fire({
+    title: '↩️ Undo Paid Cycle?',
+    html: `
+      <div class="text-left text-sm space-y-2">
+        <p class="text-gray-600">This will reopen the cycle:</p>
+        <div class="bg-amber-50 p-3 rounded-xl border border-amber-200">
+          <div class="flex justify-between text-xs"><span>Cycle:</span><strong>${entry.cycleStartDate || '—'} → ${entry.cycleEndDate || '—'}</strong></div>
+          <div class="flex justify-between text-xs mt-1"><span>Paid amount:</span><strong class="text-emerald-700">${formatINR(entry.amount || 0)}</strong></div>
+          <div class="flex justify-between text-xs mt-1"><span>Paid on:</span><strong>${entry.paymentDate || '—'}</strong></div>
+        </div>
+        <p class="text-xs text-gray-500 mt-2">The cycle's Base Salary, Pickup, Reject, Bonus, and Deduction will be <strong>restored</strong> into the current cycle so you can correct and re-pay.</p>
+        <p class="text-xs text-rose-600 font-semibold">⚠️ No data will be deleted — this action is fully reversible.</p>
+      </div>
+    `,
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonText: 'Yes, Undo',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: '#dc2626',
+    cancelButtonColor: '#64748b'
+  });
+
+  if (!confirm.isConfirmed) return;
+
+  try {
+    const updates = {
+      status: 'UNDONE',
+      undoneAt: Date.now(),
+      undoneBy: 'admin'
+    };
+
+    await db.ref(`salary_payments/${agentUsername}/${payId}`).update(updates);
+
+    if (Array.isArray(entry.cycleAdjustmentIds) && entry.cycleAdjustmentIds.length) {
+      const adjUpdates = {};
+      for (const adjId of entry.cycleAdjustmentIds) {
+        adjUpdates[`adjustments/${agentUsername}/${adjId}/settledInCycle`] = null;
+        adjUpdates[`adjustments/${agentUsername}/${adjId}/settledAt`] = null;
+      }
+      await db.ref().update(adjUpdates);
+    }
+
+    invalidate('salary_payments');
+    showToast('↩️ Paid cycle undone. Data restored.', 'success');
+
+    loadSalaryData(true);
+    loadDashboard(true);
+
+    setTimeout(() => openPaymentHistoryModal(agentUsername), 300);
+  } catch (e) {
+    console.error(e);
+    showToast('Failed to undo payment', 'error');
+  }
+}
+
+async function redoPaidCycle(agentUsername, payId) {
+  const snap = await db.ref(`salary_payments/${agentUsername}/${payId}`).once('value');
+  const entry = snap.val();
+  if (!entry) { showToast('Not found', 'error'); return; }
+
+  if (entry.status !== 'UNDONE') { showToast('Already active', 'info'); return; }
+
+  const confirm = await Swal.fire({
+    title: 'Re-apply this Paid Cycle?',
+    text: 'This will close the cycle again and start a fresh one.',
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonText: 'Yes, Re-apply',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: '#059669',
+    cancelButtonColor: '#64748b'
+  });
+
+  if (!confirm.isConfirmed) return;
+
+  try {
+    await db.ref(`salary_payments/${agentUsername}/${payId}`).update({
+      status: 'PAID',
+      redoneAt: Date.now()
+    });
+
+    if (Array.isArray(entry.cycleAdjustmentIds) && entry.cycleAdjustmentIds.length) {
+      const adjUpdates = {};
+      for (const adjId of entry.cycleAdjustmentIds) {
+        adjUpdates[`adjustments/${agentUsername}/${adjId}/settledInCycle`] = payId;
+        adjUpdates[`adjustments/${agentUsername}/${adjId}/settledAt`] = Date.now();
+      }
+      await db.ref().update(adjUpdates);
+    }
+
+    invalidate('salary_payments');
+    showToast('✅ Cycle re-applied', 'success');
+
+    loadSalaryData(true);
+    loadDashboard(true);
+
+    setTimeout(() => openPaymentHistoryModal(agentUsername), 300);
+  } catch (e) {
+    console.error(e);
+    showToast('Failed to re-apply', 'error');
+  }
+}
+
+// ---------- Delete Paid Cycle (permanent from Firebase) ----------
+async function deletePaidCycle(agentUsername, payId) {
+  if (!agentUsername || !payId) return;
+
+  const snap = await db.ref(`salary_payments/${agentUsername}/${payId}`).once('value');
+  const entry = snap.val();
+
+  if (!entry) {
+    showToast('Payment record not found', 'error');
+    return;
+  }
+
+  const confirm = await Swal.fire({
+    title: '🗑️ Delete Paid Cycle Permanently?',
+    html: `
+      <div class="text-left text-sm space-y-2">
+        <p class="text-rose-600 font-semibold">⚠️ This will PERMANENTLY remove the payment record from Firebase.</p>
+        <div class="bg-gray-50 p-3 rounded-xl border border-gray-200">
+          <div class="flex justify-between text-xs"><span>Cycle:</span><strong>${entry.cycleStartDate || '—'} → ${entry.cycleEndDate || '—'}</strong></div>
+          <div class="flex justify-between text-xs mt-1"><span>Paid amount:</span><strong>${formatINR(entry.amount || 0)}</strong></div>
+          <div class="flex justify-between text-xs mt-1"><span>Paid on:</span><strong>${entry.paymentDate || '—'}</strong></div>
+          <div class="flex justify-between text-xs mt-1"><span>Status:</span><strong>${entry.status || 'PAID'}</strong></div>
+        </div>
+        <p class="text-xs text-gray-600 mt-2">Agar sirf cycle ko reopen karna hai, to <strong>Undo</strong> use karein.<br>
+        Delete sirf tab karein jab aap Firebase se record hataana chahte hain (irreversible).</p>
+      </div>
+    `,
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonColor: '#dc2626',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: 'Yes, Delete Permanently',
+    cancelButtonText: 'Cancel'
+  });
+
+  if (!confirm.isConfirmed) return;
+
+  try {
+    if (Array.isArray(entry.cycleAdjustmentIds) && entry.cycleAdjustmentIds.length) {
+      const adjUpdates = {};
+      for (const adjId of entry.cycleAdjustmentIds) {
+        adjUpdates[`adjustments/${agentUsername}/${adjId}/settledInCycle`] = null;
+        adjUpdates[`adjustments/${agentUsername}/${adjId}/settledAt`] = null;
+      }
+      await db.ref().update(adjUpdates);
+    }
+
+    await db.ref(`salary_payments/${agentUsername}/${payId}`).remove();
+
+    invalidate('salary_payments');
+    showToast('🗑️ Paid cycle deleted from Firebase', 'success');
+
+    loadSalaryData(true);
+    loadDashboard(true);
+
+    setTimeout(() => openPaymentHistoryModal(agentUsername), 300);
+  } catch (e) {
+    console.error(e);
+    showToast('Failed to delete paid cycle', 'error');
+  }
+}
+
+// ---------- Payment History modal (with Undo / Re-apply / Delete) ----------
+async function openPaymentHistoryModal(agentUsername) {
+  if (!agentUsername) return;
+
+  try {
+    const users = await getData('users', false);
+    const uData = users[agentUsername] || { name: agentUsername };
+
+    const snap = await db.ref('salary_payments/' + agentUsername).once('value');
+    const payments = snap.val() || {};
+    const list = Object.values(payments).sort((a, b) => {
+      const da = a.paymentDate || '';
+      const dbb = b.paymentDate || '';
+      if (da !== dbb) return dbb.localeCompare(da);
+      return (b.createdAt || 0) - (a.createdAt || 0);
+    });
+
+    let rows = '';
+
+    if (!list.length) {
+      rows = '<tr><td colspan="8" class="text-center py-6 text-gray-400 text-sm">No payments recorded yet.</td></tr>';
+    } else {
+      rows = list.map((p, i) => {
+        const isUndone = p.status === 'UNDONE';
+        const statusBadge = isUndone
+          ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-200 text-gray-700">↩️ UNDONE</span>'
+          : '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">✅ PAID</span>';
+
+        const cycle = p.cycleStartDate === p.cycleEndDate
+          ? (p.cycleStartDate || '—')
+          : `${p.cycleStartDate || '—'} → ${p.cycleEndDate || '—'}`;
+
+        const undoBtn = !isUndone
+          ? `<button onclick="undoPaidCycle('${agentUsername}','${p.id}')" class="px-2 py-1 rounded bg-rose-50 text-rose-700 text-[11px] font-bold border border-rose-200 hover:bg-rose-100" title="Undo (restore data)">↩️ Undo</button>`
+          : `<button onclick="redoPaidCycle('${agentUsername}','${p.id}')" class="px-2 py-1 rounded bg-emerald-50 text-emerald-700 text-[11px] font-bold border border-emerald-200 hover:bg-emerald-100" title="Re-apply">✔️ Re-apply</button>`;
+
+        const deleteBtn = `<button onclick="deletePaidCycle('${agentUsername}','${p.id}')" class="px-2 py-1 rounded bg-red-50 text-red-600 text-[11px] font-bold border border-red-200 hover:bg-red-100 ml-1" title="Delete permanently from Firebase">🗑️</button>`;
+
+        const rowStyle = isUndone ? 'opacity-60 line-through decoration-gray-300' : '';
+
+        return `
+          <tr class="border-b border-gray-100 hover:bg-gray-50 text-xs ${rowStyle}">
+            <td class="py-2.5 px-3 text-gray-500 font-mono">${i + 1}</td>
+            <td class="py-2.5 px-3 font-semibold text-gray-800">${p.paymentDate || '—'}</td>
+            <td class="py-2.5 px-3 text-gray-600">${cycle}</td>
+            <td class="py-2.5 px-3 font-bold text-gray-800">${formatINR(p.cycleGrandTotal || 0)}</td>
+            <td class="py-2.5 px-3 font-bold text-emerald-600">${formatINR(p.amount || 0)}</td>
+            <td class="py-2.5 px-3">${statusBadge}</td>
+            <td class="py-2.5 px-3 text-gray-500 max-w-[140px] truncate" title="${esc(p.note || '')}">${p.note || '—'}</td>
+            <td class="py-2.5 px-3 text-right whitespace-nowrap">${undoBtn}${deleteBtn}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    const activeList = list.filter(p => p.status !== 'UNDONE');
+    const totalPaid = activeList.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+
+    await Swal.fire({
+      title: `📜 Paid History — ${uData.name || agentUsername}`,
+      width: '1050px',
+      html: `
+        <div class="text-left py-2 font-sans">
+          <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <span class="text-xs text-gray-500">Active cycles: <strong>${activeList.length}</strong> · Total cycles: <strong>${list.length}</strong></span>
+            <span class="text-xs text-gray-500">Total paid: <strong class="text-emerald-600">${formatINR(totalPaid)}</strong></span>
+          </div>
+          <div class="max-h-[460px] overflow-y-auto border border-gray-200 rounded-xl">
+            <table class="w-full text-left">
+              <thead class="bg-gray-50 border-b border-gray-200 text-gray-600 text-[11px] uppercase font-bold sticky top-0">
+                <tr>
+                  <th class="py-2.5 px-3">#</th>
+                  <th class="py-2.5 px-3">Payment Date</th>
+                  <th class="py-2.5 px-3">Cycle Period</th>
+                  <th class="py-2.5 px-3">Grand Total</th>
+                  <th class="py-2.5 px-3">Paid Amount</th>
+                  <th class="py-2.5 px-3">Status</th>
+                  <th class="py-2.5 px-3">Note</th>
+                  <th class="py-2.5 px-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+          <div class="mt-3 p-3 bg-blue-50 rounded-lg border border-blue-100 text-[11px] text-gray-700 leading-relaxed">
+            <p><strong>💡 Options:</strong></p>
+            <p>• <strong>↩️ Undo</strong> → Cycle reopen ho jaayegi, saara data (Base, Pickup, Reject, Bonus, Deduction) wapas restore ho jaayega. Aap correct karke dobara pay kar sakte hain.</p>
+            <p>• <strong>✔️ Re-apply</strong> → Undone cycle ko wapas PAID mark kar dega.</p>
+            <p>• <strong>🗑️ Delete</strong> → Firebase se permanently hata dega (irreversible). Sirf tab use karein jab aap record hi nahi rakhna chahte.</p>
+          </div>
+        </div>
+      `,
+      showConfirmButton: false,
+      showCloseButton: true
+    });
+  } catch (e) {
+    console.error(e);
+    showToast('Failed to load payment history', 'error');
+  }
+}
+
+// ---------- Global Paid History (All Agents) ----------
+async function openAllPaymentsHistoryModal() {
+  try {
+    const [users, snap] = await Promise.all([
+      getData('users', false),
+      db.ref('salary_payments').once('value')
+    ]);
+    const allPayments = snap.val() || {};
+
+    let list = [];
+    for (const [uname, uPays] of Object.entries(allPayments)) {
+      for (const p of Object.values(uPays)) {
+        list.push({ ...p, agent: uname });
+      }
+    }
+
+    list.sort((a, b) => {
+      const da = a.paymentDate || '';
+      const dbb = b.paymentDate || '';
+      if (da !== dbb) return dbb.localeCompare(da);
+      return (b.createdAt || 0) - (a.createdAt || 0);
+    });
+
+    let rows = '';
+    if (!list.length) {
+      rows = '<tr><td colspan="8" class="text-center py-6 text-gray-400 text-sm">No payments recorded yet.</td></tr>';
+    } else {
+      rows = list.map((p, i) => {
+        const isUndone = p.status === 'UNDONE';
+        const statusBadge = isUndone
+          ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-200 text-gray-700">↩️ UNDONE</span>'
+          : '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">✅ PAID</span>';
+
+        const cycle = p.cycleStartDate === p.cycleEndDate
+          ? (p.cycleStartDate || '—')
+          : `${p.cycleStartDate || '—'} → ${p.cycleEndDate || '—'}`;
+
+        const agentName = (users[p.agent] && users[p.agent].name) || p.agent;
+
+        const undoBtn = !isUndone
+          ? `<button onclick="undoPaidCycle('${p.agent}','${p.id}')" class="px-2 py-1 rounded bg-rose-50 text-rose-700 text-[11px] font-bold border border-rose-200 hover:bg-rose-100">↩️</button>`
+          : `<button onclick="redoPaidCycle('${p.agent}','${p.id}')" class="px-2 py-1 rounded bg-emerald-50 text-emerald-700 text-[11px] font-bold border border-emerald-200 hover:bg-emerald-100">✔️</button>`;
+
+        const deleteBtn = `<button onclick="deletePaidCycle('${p.agent}','${p.id}')" class="px-2 py-1 rounded bg-red-50 text-red-600 text-[11px] font-bold border border-red-200 hover:bg-red-100 ml-1">🗑️</button>`;
+
+        const rowStyle = isUndone ? 'opacity-60' : '';
+
+        return `
+          <tr class="border-b border-gray-100 hover:bg-gray-50 text-xs ${rowStyle}">
+            <td class="py-2.5 px-3 text-gray-500 font-mono">${i + 1}</td>
+            <td class="py-2.5 px-3 font-semibold text-gray-800">${agentName} <span class="text-gray-400 font-mono">(${p.agent})</span></td>
+            <td class="py-2.5 px-3 font-semibold text-gray-800">${p.paymentDate || '—'}</td>
+            <td class="py-2.5 px-3 text-gray-600">${cycle}</td>
+            <td class="py-2.5 px-3 font-bold text-gray-800">${formatINR(p.cycleGrandTotal || 0)}</td>
+            <td class="py-2.5 px-3 font-bold text-emerald-600">${formatINR(p.amount || 0)}</td>
+            <td class="py-2.5 px-3">${statusBadge}</td>
+            <td class="py-2.5 px-3 text-right whitespace-nowrap">${undoBtn}${deleteBtn}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    const activeList = list.filter(p => p.status !== 'UNDONE');
+    const totalPaid = activeList.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+
+    await Swal.fire({
+      title: `📜 All Paid Cycles (All Agents)`,
+      width: '1100px',
+      html: `
+        <div class="text-left py-2 font-sans">
+          <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <span class="text-xs text-gray-500">Active cycles: <strong>${activeList.length}</strong> · Total cycles: <strong>${list.length}</strong></span>
+            <span class="text-xs text-gray-500">Total paid: <strong class="text-emerald-600">${formatINR(totalPaid)}</strong></span>
+          </div>
+          <div class="max-h-[500px] overflow-y-auto border border-gray-200 rounded-xl">
+            <table class="w-full text-left">
+              <thead class="bg-gray-50 border-b border-gray-200 text-gray-600 text-[11px] uppercase font-bold sticky top-0">
+                <tr>
+                  <th class="py-2.5 px-3">#</th>
+                  <th class="py-2.5 px-3">Agent</th>
+                  <th class="py-2.5 px-3">Payment Date</th>
+                  <th class="py-2.5 px-3">Cycle Period</th>
+                  <th class="py-2.5 px-3">Grand Total</th>
+                  <th class="py-2.5 px-3">Paid Amount</th>
+                  <th class="py-2.5 px-3">Status</th>
+                  <th class="py-2.5 px-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        </div>
+      `,
+      showConfirmButton: false,
+      showCloseButton: true
+    });
+  } catch (e) {
+    console.error(e);
+    showToast('Failed to load history', 'error');
+  }
+}
+
+// ================================================================
+// ADJUSTMENT SYSTEM (Flipkart backend — Bonus/Deduction/Advance/Revert/Delete)
+// ================================================================
+let currentAdjustmentAgent = null;
+
+async function openAddAdjustmentModal(defaultAgent = '') {
+  const users = await getData('users', false);
+  const activeAgents = getActiveAgents(users);
+
+  const agentOptions = Object.entries(activeAgents).map(([uname, u]) =>
+    `<option value="${uname}" ${uname === defaultAgent ? 'selected' : ''}>${u.name || uname} (${uname})</option>`
+  ).join('');
+
+  const now = new Date();
+  const todayDate = getLocalYMD(now);
+  const curTime = now.toTimeString().slice(0, 5);
+
+  const { value: formValues } = await Swal.fire({
+    title: '➕ Add Payment / Adjustment',
+    width: '560px',
+    html: `
+      <div class="text-left text-xs space-y-3 font-sans pt-1">
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block font-semibold text-gray-700 mb-1">Select Agent</label>
+            <select id="adj_agent" class="w-full p-2 border border-gray-300 rounded-lg text-sm bg-white">
+              ${agentOptions}
+            </select>
+          </div>
+          <div>
+            <label class="block font-semibold text-gray-700 mb-1">Type</label>
+            <select id="adj_type" class="w-full p-2 border border-gray-300 rounded-lg text-sm bg-white">
+              <option value="Bonus">🎁 Bonus (Add)</option>
+              <option value="Incentive">⭐ Extra Incentive (Add)</option>
+              <option value="Extra Salary">💵 Extra Salary (Add)</option>
+              <option value="Advance">💸 Salary Advance (Deduct)</option>
+              <option value="Penalty">⚠️ Penalty / Cut (Deduct)</option>
+              <option value="Fuel/Travel Allowance">⛽ Fuel / Travel Allowance (Add)</option>
+              <option value="Other Adjustment">📝 Other Adjustment</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block font-semibold text-gray-700 mb-1">Amount (₹)</label>
+            <input type="number" id="adj_amount" min="1" placeholder="e.g. 500" class="w-full p-2 border border-gray-300 rounded-lg text-sm" />
+          </div>
+          <div>
+            <label class="block font-semibold text-gray-700 mb-1">Date & Time</label>
+            <div class="flex gap-1">
+              <input type="date" id="adj_date" value="${todayDate}" class="w-2/3 p-2 border border-gray-300 rounded-lg text-xs" />
+              <input type="time" id="adj_time" value="${curTime}" class="w-1/3 p-2 border border-gray-300 rounded-lg text-xs" />
+            </div>
+          </div>
+        </div>
+
+        <div class="p-3 bg-gray-50 border border-gray-200 rounded-xl space-y-2">
+          <div class="font-semibold text-gray-800 text-[11px] uppercase tracking-wide">Adjustment Rules</div>
+
+          <div class="flex items-center justify-between">
+            <span class="text-gray-700 font-medium">Salary Effect:</span>
+            <select id="adj_is_deduction" class="p-1 border border-gray-300 rounded text-xs bg-white">
+              <option value="add">➕ Add to Salary (Earnings)</option>
+              <option value="deduct">➖ Deduct from Salary</option>
+              <option value="neutral">Neutral (Record only)</option>
+            </select>
+          </div>
+
+          <div class="flex items-center justify-between">
+            <span class="text-gray-700 font-medium">Deduct from Pickup/Reject Incentives?</span>
+            <select id="adj_deduct_incentives" class="p-1 border border-gray-300 rounded text-xs bg-white">
+              <option value="no">No (Base salary only)</option>
+              <option value="yes">Yes (Can cut from incentives)</option>
+            </select>
+          </div>
+
+          <div class="flex items-center justify-between">
+            <span class="text-gray-700 font-medium">Adjustment Period:</span>
+            <select id="adj_adjust_target" class="p-1 border border-gray-300 rounded text-xs bg-white">
+              <option value="current">Current Month Salary</option>
+              <option value="previous_balance">Previous Balance / Carry Forward</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label class="block font-semibold text-gray-700 mb-1">Reason / Notes</label>
+          <input type="text" id="adj_reason" placeholder="e.g. Good performance on Sunday pickup rush" class="w-full p-2 border border-gray-300 rounded-lg text-xs" />
+        </div>
+      </div>
+    `,
+    showCancelButton: true,
+    confirmButtonText: '💾 Save Adjustment',
+    confirmButtonColor: '#4f46e5',
+    cancelButtonColor: '#64748b',
+    preConfirm: () => {
+      const agent = document.getElementById('adj_agent').value;
+      const amount = Number(document.getElementById('adj_amount').value);
+      const type = document.getElementById('adj_type').value;
+      const date = document.getElementById('adj_date').value;
+      const time = document.getElementById('adj_time').value;
+      const effect = document.getElementById('adj_is_deduction').value;
+      const deductIncentives = document.getElementById('adj_deduct_incentives').value;
+      const adjustTarget = document.getElementById('adj_adjust_target').value;
+      const reason = document.getElementById('adj_reason').value.trim();
+
+      if (!agent) { Swal.showValidationMessage('Select an agent'); return false; }
+      if (!amount || amount <= 0) { Swal.showValidationMessage('Enter a valid amount'); return false; }
+      if (!date) { Swal.showValidationMessage('Select a date'); return false; }
+
+      return { agent, amount, type, date, time, effect, deductIncentives, adjustTarget, reason };
+    }
+  });
+
+  if (!formValues) return;
+
+  try {
+    const adjId = 'adj_' + Date.now();
+    const entry = {
+      id: adjId,
+      agent: formValues.agent,
+      amount: formValues.amount,
+      type: formValues.type,
+      date: formValues.date,
+      time: formValues.time || '12:00',
+      timestamp: new Date(`${formValues.date}T${formValues.time || '12:00'}`).getTime() || Date.now(),
+      effect: formValues.effect,
+      deductIncentives: formValues.deductIncentives === 'yes',
+      adjustTarget: formValues.adjustTarget,
+      reason: formValues.reason || 'None',
+
+      createdAt: Date.now(),
+      createdBy: 'admin',
+      createdByName: 'Admin',
+      status: 'ACTIVE',
+      settledInCycle: null,
+      settledAt: null
+    };
+
+    await db.ref(`adjustments/${formValues.agent}/${adjId}`).set(entry);
+    showToast(`✅ ${formValues.type} of ₹${formValues.amount} saved!`, 'success');
+
+    loadSalaryData(true);
+  } catch (e) {
+    console.error('Error saving adjustment:', e);
+    showToast('Failed to save adjustment', 'error');
+  }
+}
+
+// ---------- Adjustment History (with cycle + status + revert + delete) ----------
+async function openAdjustmentHistoryModal(agentUsername = null) {
+  try {
+    const [snap, paymentsSnap] = await Promise.all([
+      db.ref('adjustments').once('value'),
+      db.ref('salary_payments').once('value')
+    ]);
+    const allAdjustments = snap.val() || {};
+    const allPayments = paymentsSnap.val() || {};
+
+    const paymentIndex = {};
+    for (const [uname, uPays] of Object.entries(allPayments)) {
+      for (const p of Object.values(uPays)) {
+        paymentIndex[p.id] = {
+          agent: uname,
+          paymentDate: p.paymentDate,
+          cycleStartDate: p.cycleStartDate,
+          cycleEndDate: p.cycleEndDate,
+          status: p.status || 'PAID'
+        };
+      }
+    }
+
+    let list = [];
+    if (agentUsername) {
+      const agentList = allAdjustments[agentUsername] || {};
+      list = Object.values(agentList).map(a => ({ ...a, agent: agentUsername }));
+    } else {
+      for (const [uname, uAdj] of Object.entries(allAdjustments)) {
+        for (const item of Object.values(uAdj)) {
+          list.push({ ...item, agent: uname });
+        }
+      }
+    }
+
+    list.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+    let rowsHtml = '';
+    if (!list.length) {
+      rowsHtml = '<tr><td colspan="8" class="text-center py-6 text-gray-400">No adjustment entries found.</td></tr>';
+    } else {
+      rowsHtml = list.map(item => {
+        const isAdd = item.effect === 'add';
+        const isDeduct = item.effect === 'deduct';
+        const colorClass = isAdd ? 'text-emerald-700 bg-emerald-50' : (isDeduct ? 'text-rose-700 bg-rose-50' : 'text-gray-700 bg-gray-50');
+        const sign = isAdd ? '+₹' : (isDeduct ? '-₹' : '₹');
+
+        const isReverted = item.status === 'REVERTED';
+
+        let cycleLabel = '—';
+        if (item.settledInCycle && paymentIndex[item.settledInCycle]) {
+          const p = paymentIndex[item.settledInCycle];
+          cycleLabel = `${p.cycleStartDate || '—'} → ${p.cycleEndDate || '—'}`;
+          if (p.status === 'UNDONE') {
+            cycleLabel += ' (undone)';
+          }
+        } else {
+          cycleLabel = 'Current / Open';
+        }
+
+        let statusBadge = '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-800">🟢 ACTIVE</span>';
+        if (isReverted) {
+          statusBadge = '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-200 text-gray-700">↩️ REVERTED</span>';
+        } else if (item.settledInCycle) {
+          statusBadge = '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">✅ SETTLED</span>';
+        }
+
+        const createdInfo = item.createdAt
+          ? new Date(item.createdAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })
+          : '—';
+
+        const revertBtn = isReverted
+          ? `<span class="text-[10px] text-gray-400">Reverted</span>`
+          : `<button onclick="revertAdjustment('${item.agent}','${item.id}')" class="text-amber-600 hover:text-amber-800 font-semibold p-1" title="Revert">↩️</button>
+             <button onclick="deleteAdjustment('${item.agent}','${item.id}')" class="text-rose-500 hover:text-rose-700 font-semibold p-1" title="Delete permanently">🗑</button>`;
+
+        return `
+          <tr class="border-b border-gray-100 hover:bg-gray-50 text-xs ${isReverted ? 'opacity-60' : ''}">
+            <td class="py-2.5 px-3 font-medium text-gray-800 whitespace-nowrap">${item.date || '—'} <span class="text-gray-400 font-mono">${item.time || ''}</span></td>
+            <td class="py-2.5 px-3 font-semibold text-gray-700">${item.agent}</td>
+            <td class="py-2.5 px-3"><span class="px-2 py-0.5 rounded font-semibold ${colorClass}">${item.type || '—'}</span></td>
+            <td class="py-2.5 px-3 font-bold ${isAdd ? 'text-emerald-600' : (isDeduct ? 'text-rose-600' : 'text-gray-800')}">${sign}${item.amount || 0}</td>
+            <td class="py-2.5 px-3 text-gray-600 max-w-[160px] truncate" title="${esc(item.reason || '')}">${esc(item.reason || '—')}</td>
+            <td class="py-2.5 px-3 text-gray-600 whitespace-nowrap">${cycleLabel}</td>
+            <td class="py-2.5 px-3">${statusBadge}<div class="text-[9px] text-gray-400 mt-0.5">by ${item.createdByName || item.createdBy || 'admin'} · ${createdInfo}</div></td>
+            <td class="py-2.5 px-3 text-right whitespace-nowrap">${revertBtn}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    await Swal.fire({
+      title: agentUsername ? `Adjustment History: ${agentUsername}` : '📋 All Payments & Adjustments',
+      width: '1150px',
+      html: `
+        <div class="text-left py-2 font-sans">
+          <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <span class="text-xs text-gray-500 font-medium">Total entries: <strong>${list.length}</strong></span>
+            <button onclick="Swal.close(); openAddAdjustmentModal('${agentUsername || ''}')" class="px-3 py-1 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700">
+              ➕ Add New
+            </button>
+          </div>
+          <div class="max-h-[460px] overflow-y-auto border border-gray-200 rounded-xl">
+            <table class="w-full text-left">
+              <thead class="bg-gray-50 border-b border-gray-200 text-gray-600 text-[11px] uppercase font-bold sticky top-0">
+                <tr>
+                  <th class="py-2.5 px-3">Date/Time</th>
+                  <th class="py-2.5 px-3">Agent</th>
+                  <th class="py-2.5 px-3">Type</th>
+                  <th class="py-2.5 px-3">Amount</th>
+                  <th class="py-2.5 px-3">Reason / Notes</th>
+                  <th class="py-2.5 px-3">Cycle</th>
+                  <th class="py-2.5 px-3">Status</th>
+                  <th class="py-2.5 px-3 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody>${rowsHtml}</tbody>
+            </table>
+          </div>
+          <p class="text-[11px] text-gray-400 mt-3">💡 Revert: settled adjustment ko wapas active kar dega (data safe). Delete: Firebase se permanently hata dega (irreversible).</p>
+        </div>
+      `,
+      showConfirmButton: false,
+      showCloseButton: true
+    });
+  } catch (e) {
+    console.error(e);
+    showToast('Failed to load history', 'error');
+  }
+}
+
+async function revertAdjustment(agent, id) {
+  const confirm = await Swal.fire({
+    title: 'Revert this Adjustment?',
+    html: `
+      <div class="text-left text-xs space-y-2">
+        <p class="text-gray-600">Is adjustment ko revert karne par:</p>
+        <ul class="list-disc list-inside text-gray-700 space-y-1 ml-1">
+          <li>Status <strong>REVERTED</strong> ho jaayega</li>
+          <li>Salary calculation se effect hat jaayega</li>
+          <li>Data delete nahi hoga — history mein dikhega</li>
+        </ul>
+      </div>
+    `,
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonText: '↩️ Yes, Revert',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: '#d97706',
+    cancelButtonColor: '#64748b'
+  });
+
+  if (!confirm.isConfirmed) return;
+
+  try {
+    await db.ref(`adjustments/${agent}/${id}`).update({
+      status: 'REVERTED',
+      revertedAt: Date.now(),
+      revertedBy: 'admin',
+      settledInCycle: null,
+      settledAt: null
+    });
+
+    showToast('↩️ Adjustment reverted', 'success');
+    loadSalaryData(true);
+    setTimeout(() => openAdjustmentHistoryModal(agent), 300);
+  } catch (e) {
+    console.error(e);
+    showToast('Failed to revert', 'error');
+  }
+}
+
+async function deleteAdjustment(agent, id) {
+  const confirm = await Swal.fire({
+    title: 'Delete Adjustment?',
+    html: `
+      <div class="text-left text-xs">
+        <p class="text-rose-600 font-semibold mb-2">⚠️ This will PERMANENTLY delete this adjustment from Firebase.</p>
+        <p class="text-gray-600">Agar sirf effect hatana hai to <strong>Revert</strong> use karein.</p>
+      </div>
+    `,
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonColor: '#dc2626',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: 'Yes, Delete Permanently'
+  });
+
+  if (!confirm.isConfirmed) return;
+
+  try {
+    await db.ref(`adjustments/${agent}/${id}`).remove();
+    showToast('Adjustment deleted', 'info');
+    loadSalaryData(true);
+    setTimeout(() => openAdjustmentHistoryModal(agent), 300);
+  } catch (e) {
+    showToast('Failed to delete', 'error');
+  }
 }
 
 // ================================================================
@@ -5126,7 +6222,7 @@ async function refreshAll() {
   isRefreshing = true;
   showToast('🔄 Refreshing...', 'info');
 
-  invalidate('pickups', 'pending', 'users', 'deposits', 'attendance');
+  invalidate('pickups', 'pending', 'users', 'deposits', 'attendance', 'salary_payments');
 
   await Promise.allSettled([
     loadDashboard(true),
@@ -5158,6 +6254,36 @@ setInterval(updateClock, 1000);
 updateClock();
 
 // ================================================================
+// INJECT SALARY HEADER BUTTONS (Adjustments + All Paid History)
+// ================================================================
+function injectSalaryHeaderButtons() {
+  const recalcBtn = document.querySelector('button[onclick="recalculateAllSalary()"]');
+  if (!recalcBtn || !recalcBtn.parentElement) return;
+
+  const parent = recalcBtn.parentElement;
+
+  if (!$('globalAdjustBtn')) {
+    const adjBtn = document.createElement('button');
+    adjBtn.id = 'globalAdjustBtn';
+    adjBtn.className = 'btn-action edit';
+    adjBtn.innerHTML = '<i data-lucide="list"></i> Adjustments';
+    adjBtn.onclick = () => openAdjustmentHistoryModal(null);
+    parent.appendChild(adjBtn);
+  }
+
+  if (!$('globalPayHistBtn')) {
+    const payHistBtn = document.createElement('button');
+    payHistBtn.id = 'globalPayHistBtn';
+    payHistBtn.className = 'btn-action view';
+    payHistBtn.innerHTML = '<i data-lucide="receipt"></i> Paid History';
+    payHistBtn.onclick = () => openAllPaymentsHistoryModal();
+    parent.appendChild(payHistBtn);
+  }
+
+  refreshIcons();
+}
+
+// ================================================================
 // INIT
 // ================================================================
 document.addEventListener('DOMContentLoaded', () => {
@@ -5181,6 +6307,20 @@ document.addEventListener('DOMContentLoaded', () => {
   if (depositDateEl) depositDateEl.value = getLocalYMD();
   const depositAmtEl = $('depositAmount');
   if (depositAmtEl) depositAmtEl.addEventListener('input', updateDepositLivePreview);
+
+  // Inject "Current Cycle" button dynamically
+  const salaryToggleBar = $('salaryModeDate')?.parentElement;
+  if (salaryToggleBar && !$('salaryModeCurrentCycle')) {
+    const btn = document.createElement('button');
+    btn.id = 'salaryModeCurrentCycle';
+    btn.className = 'salary-toggle-btn';
+    btn.textContent = 'Current Cycle';
+    btn.onclick = () => setSalaryMode('current_cycle');
+    salaryToggleBar.appendChild(btn);
+  }
+
+  // Inject global salary header buttons (Adjustments + Paid History)
+  injectSalaryHeaderButtons();
 
   const agentRole = document.querySelector('input[name="regRole"][value="agent"]');
   if (agentRole) agentRole.checked = true;
@@ -5251,257 +6391,6 @@ document.addEventListener('keydown', function (e) {
 });
 
 // ================================================================
-// PAYMENT & ADJUSTMENT SYSTEM
-// ================================================================
-let currentAdjustmentAgent = null;
-
-async function openAddAdjustmentModal(defaultAgent = '') {
-  const users = await getData('users', false);
-  const activeAgents = getActiveAgents(users);
-  
-  const agentOptions = Object.entries(activeAgents).map(([uname, u]) => 
-    `<option value="${uname}" ${uname === defaultAgent ? 'selected' : ''}>${u.name || uname} (${uname})</option>`
-  ).join('');
-
-  const now = new Date();
-  const todayDate = getLocalYMD(now);
-  const curTime = now.toTimeString().slice(0, 5);
-
-  const { value: formValues } = await Swal.fire({
-    title: '➕ Add Payment / Adjustment',
-    width: '560px',
-    html: `
-      <div class="text-left text-xs space-y-3 font-sans pt-1">
-        <div class="grid grid-cols-2 gap-2">
-          <div>
-            <label class="block font-semibold text-gray-700 mb-1">Select Agent</label>
-            <select id="adj_agent" class="w-full p-2 border border-gray-300 rounded-lg text-sm bg-white">
-              ${agentOptions}
-            </select>
-          </div>
-          <div>
-            <label class="block font-semibold text-gray-700 mb-1">Type</label>
-            <select id="adj_type" class="w-full p-2 border border-gray-300 rounded-lg text-sm bg-white">
-              <option value="Bonus">🎁 Bonus (Add)</option>
-              <option value="Incentive">⭐ Extra Incentive (Add)</option>
-              <option value="Extra Salary">💵 Extra Salary (Add)</option>
-              <option value="Advance">💸 Salary Advance (Deduct)</option>
-              <option value="Penalty">⚠️ Penalty / Cut (Deduct)</option>
-              <option value="Fuel/Travel Allowance">⛽ Fuel / Travel Allowance (Add)</option>
-              <option value="Other Adjustment">📝 Other Adjustment</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="grid grid-cols-2 gap-2">
-          <div>
-            <label class="block font-semibold text-gray-700 mb-1">Amount (₹)</label>
-            <input type="number" id="adj_amount" min="1" placeholder="e.g. 500" class="w-full p-2 border border-gray-300 rounded-lg text-sm" />
-          </div>
-          <div>
-            <label class="block font-semibold text-gray-700 mb-1">Date & Time</label>
-            <div class="flex gap-1">
-              <input type="date" id="adj_date" value="${todayDate}" class="w-2/3 p-2 border border-gray-300 rounded-lg text-xs" />
-              <input type="time" id="adj_time" value="${curTime}" class="w-1/3 p-2 border border-gray-300 rounded-lg text-xs" />
-            </div>
-          </div>
-        </div>
-
-        <div class="p-3 bg-gray-50 border border-gray-200 rounded-xl space-y-2">
-          <div class="font-semibold text-gray-800 text-[11px] uppercase tracking-wide">Adjustment Rules</div>
-          
-          <div class="flex items-center justify-between">
-            <span class="text-gray-700 font-medium">Salary Effect:</span>
-            <select id="adj_is_deduction" class="p-1 border border-gray-300 rounded text-xs bg-white">
-              <option value="add">➕ Add to Salary (Earnings)</option>
-              <option value="deduct">➖ Deduct from Salary</option>
-              <option value="neutral">Neutral (Record only)</option>
-            </select>
-          </div>
-
-          <div class="flex items-center justify-between">
-            <span class="text-gray-700 font-medium">Deduct from Pickup/Reject Incentives?</span>
-            <select id="adj_deduct_incentives" class="p-1 border border-gray-300 rounded text-xs bg-white">
-              <option value="no">No (Base salary only)</option>
-              <option value="yes">Yes (Can cut from incentives)</option>
-            </select>
-          </div>
-
-          <div class="flex items-center justify-between">
-            <span class="text-gray-700 font-medium">Adjustment Period:</span>
-            <select id="adj_adjust_target" class="p-1 border border-gray-300 rounded text-xs bg-white">
-              <option value="current">Current Month Salary</option>
-              <option value="previous_balance">Previous Balance / Carry Forward</option>
-            </select>
-          </div>
-        </div>
-
-        <div>
-          <label class="block font-semibold text-gray-700 mb-1">Reason / Notes</label>
-          <input type="text" id="adj_reason" placeholder="e.g. Good performance on Sunday pickup rush" class="w-full p-2 border border-gray-300 rounded-lg text-xs" />
-        </div>
-      </div>
-    `,
-    showCancelButton: true,
-    confirmButtonText: '💾 Save Adjustment',
-    confirmButtonColor: '#4f46e5',
-    cancelButtonColor: '#64748b',
-    preConfirm: () => {
-      const agent = document.getElementById('adj_agent').value;
-      const amount = Number(document.getElementById('adj_amount').value);
-      const type = document.getElementById('adj_type').value;
-      const date = document.getElementById('adj_date').value;
-      const time = document.getElementById('adj_time').value;
-      const effect = document.getElementById('adj_is_deduction').value;
-      const deductIncentives = document.getElementById('adj_deduct_incentives').value;
-      const adjustTarget = document.getElementById('adj_adjust_target').value;
-      const reason = document.getElementById('adj_reason').value.trim();
-
-      if (!agent) { Swal.showValidationMessage('Select an agent'); return false; }
-      if (!amount || amount <= 0) { Swal.showValidationMessage('Enter a valid amount'); return false; }
-      if (!date) { Swal.showValidationMessage('Select a date'); return false; }
-
-      return { agent, amount, type, date, time, effect, deductIncentives, adjustTarget, reason };
-    }
-  });
-
-  if (!formValues) return;
-
-  try {
-    const adjId = 'adj_' + Date.now();
-    const entry = {
-      id: adjId,
-      agent: formValues.agent,
-      amount: formValues.amount,
-      type: formValues.type,
-      date: formValues.date,
-      time: formValues.time || '12:00',
-      timestamp: new Date(`${formValues.date}T${formValues.time || '12:00'}`).getTime() || Date.now(),
-      effect: formValues.effect,
-      deductIncentives: formValues.deductIncentives === 'yes',
-      adjustTarget: formValues.adjustTarget,
-      reason: formValues.reason || 'None',
-      createdAt: Date.now(),
-      createdBy: 'admin'
-    };
-
-    await db.ref(`adjustments/${formValues.agent}/${adjId}`).set(entry);
-    showToast(`✅ ${formValues.type} of ₹${formValues.amount} saved!`, 'success');
-    
-    loadSalaryData(true);
-    if (currentPageView === 'adjustments') loadAdjustmentHistory();
-  } catch (e) {
-    console.error('Error saving adjustment:', e);
-    showToast('Failed to save adjustment', 'error');
-  }
-}
-
-async function openAdjustmentHistoryModal(agentUsername = null) {
-  try {
-    const snap = await db.ref('adjustments').once('value');
-    const allAdjustments = snap.val() || {};
-
-    let list = [];
-    if (agentUsername) {
-      const agentList = allAdjustments[agentUsername] || {};
-      list = Object.values(agentList);
-    } else {
-      for (const [uname, uAdj] of Object.entries(allAdjustments)) {
-        for (const item of Object.values(uAdj)) {
-          list.push({ ...item, agent: uname });
-        }
-      }
-    }
-
-    list.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-
-    let rowsHtml = '';
-    if (!list.length) {
-      rowsHtml = '<tr><td colspan="6" class="text-center py-6 text-gray-400">No payment or adjustment entries found.</td></tr>';
-    } else {
-      rowsHtml = list.map(item => {
-        const isAdd = item.effect === 'add';
-        const isDeduct = item.effect === 'deduct';
-        const colorClass = isAdd ? 'text-emerald-700 bg-emerald-50' : (isDeduct ? 'text-rose-700 bg-rose-50' : 'text-gray-700 bg-gray-50');
-        const sign = isAdd ? '+₹' : (isDeduct ? '-₹' : '₹');
-
-        return `
-          <tr class="border-b border-gray-100 hover:bg-gray-50 text-xs">
-            <td class="py-2.5 px-3 font-medium text-gray-800">${item.date} <span class="text-gray-400 font-mono">${item.time || ''}</span></td>
-            <td class="py-2.5 px-3 font-semibold text-gray-700">${item.agent}</td>
-            <td class="py-2.5 px-3"><span class="px-2 py-0.5 rounded font-semibold ${colorClass}">${item.type}</span></td>
-            <td class="py-2.5 px-3 font-bold ${isAdd ? 'text-emerald-600' : (isDeduct ? 'text-rose-600' : 'text-gray-800')}">${sign}${item.amount}</td>
-            <td class="py-2.5 px-3 text-gray-600 max-w-[200px] truncate" title="${item.reason}">${item.reason || '—'}</td>
-            <td class="py-2.5 px-3 text-right">
-              <button onclick="deleteAdjustment('${item.agent}', '${item.id}')" class="text-rose-500 hover:text-rose-700 font-semibold p-1" title="Delete">🗑</button>
-            </td>
-          </tr>
-        `;
-      }).join('');
-    }
-
-    await Swal.fire({
-      title: agentUsername ? `Adjustments: ${agentUsername}` : '📋 All Payments & Adjustments',
-      width: '850px',
-      html: `
-        <div class="text-left py-2 font-sans">
-          <div class="flex items-center justify-between mb-3">
-            <span class="text-xs text-gray-500 font-medium">Total entries: <strong>${list.length}</strong></span>
-            <button onclick="Swal.close(); openAddAdjustmentModal('${agentUsername || ''}')" class="px-3 py-1 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700">
-              ➕ Add New
-            </button>
-          </div>
-          <div class="max-h-[460px] overflow-y-auto border border-gray-200 rounded-xl">
-            <table class="w-full text-left">
-              <thead class="bg-gray-50 border-b border-gray-200 text-gray-600 text-[11px] uppercase font-bold sticky top-0">
-                <tr>
-                  <th class="py-2.5 px-3">Date/Time</th>
-                  <th class="py-2.5 px-3">Agent</th>
-                  <th class="py-2.5 px-3">Type</th>
-                  <th class="py-2.5 px-3">Amount</th>
-                  <th class="py-2.5 px-3">Reason / Notes</th>
-                  <th class="py-2.5 px-3 text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody>${rowsHtml}</tbody>
-            </table>
-          </div>
-        </div>
-      `,
-      showConfirmButton: false,
-      showCloseButton: true
-    });
-  } catch (e) {
-    console.error(e);
-    showToast('Failed to load history', 'error');
-  }
-}
-
-async function deleteAdjustment(agent, id) {
-  const confirm = await Swal.fire({
-    title: 'Delete Entry?',
-    text: 'This will remove this adjustment and recalculate salary.',
-    icon: 'warning',
-    showCancelButton: true,
-    confirmButtonColor: '#dc2626',
-    cancelButtonColor: '#64748b',
-    confirmButtonText: 'Yes, Delete'
-  });
-
-  if (!confirm.isConfirmed) return;
-
-  try {
-    await db.ref(`adjustments/${agent}/${id}`).remove();
-    showToast('Adjustment deleted', 'info');
-    Swal.close();
-    loadSalaryData(true);
-    openAdjustmentHistoryModal(agent);
-  } catch (e) {
-    showToast('Failed to delete', 'error');
-  }
-}
-
-// ================================================================
 // ATTENDANCE CALENDAR SYSTEM
 // ================================================================
 let currentCalendarYear = new Date().getFullYear();
@@ -5511,7 +6400,7 @@ let currentCalendarAgent = null;
 async function viewAttendanceCalendar(username = null) {
   const users = await getData('users', false);
   const activeAgents = getActiveAgents(users);
-  
+
   if (!username) {
     const firstKey = Object.keys(activeAgents)[0];
     if (!firstKey) { showToast('No active agents', 'warning'); return; }
@@ -5539,7 +6428,6 @@ async function renderAttendanceCalendarModal() {
   const year = currentCalendarYear;
   const month = currentCalendarMonth;
   const monthStr = String(month).padStart(2, '0');
-  const monthKey = `${year}-${monthStr}`;
 
   const users = await getData('users', false);
   const uData = users[username] || { name: username };
@@ -5618,7 +6506,7 @@ async function renderAttendanceCalendarModal() {
     `;
   }
 
-  const agentSelectOptions = Object.entries(activeAgents).map(([uname, u]) => 
+  const agentSelectOptions = Object.entries(activeAgents).map(([uname, u]) =>
     `<option value="${uname}" ${uname === username ? 'selected' : ''}>${u.name || uname}</option>`
   ).join('');
 
@@ -5709,8 +6597,7 @@ async function quickToggleDay(username, dateStr, currentStatus, isHalfDay) {
   } else if (newStatus === 'absent') {
     await setAgentAttendanceStatus(username, dateStr, 'absent', false);
   } else if (newStatus === 'unmarked') {
-    await db.ref(`attendance/${username}/${dateStr}`).remove();
-    showToast('Marked as unmarked', 'info');
+    await setAgentAttendanceStatus(username, dateStr, 'unmarked', false);
   }
 
   loadAttendance(true);
