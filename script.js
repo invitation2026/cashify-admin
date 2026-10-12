@@ -94,6 +94,20 @@ function getActualPurchaseCost(item) {
 }
 
 // ================================================================
+// 🆕 PER-ACTIVITY INCENTIVE OVERRIDE HELPER
+// Returns overridden incentive if present on the activity, else null.
+// The agent's default `pickup_incentive` / `reject_incentive` remains
+// untouched — this override applies only to the single activity.
+// ================================================================
+function getOverrideAmount(item) {
+  if (!item) return null;
+  const v = item.custom_incentive;
+  if (v === undefined || v === null || v === '') return null;
+  const n = Number(v);
+  return isNaN(n) ? null : n;
+}
+
+// ================================================================
 // CASHIFY ENHANCED SMART SEARCH ENGINE
 // ================================================================
 function normalizeSearchText(str) {
@@ -666,7 +680,7 @@ let allDeposits = [];
 let filteredDeposits = [];
 let depositCurrentPage = 1;
 const depositPageSize = 15;
-let depositAccountFilter = 'all';   // 🆕 dual-account filter state
+let depositAccountFilter = 'all';
 
 let currentSalaryMode = 'today';
 let currentSalaryPeriod = null;
@@ -1487,10 +1501,13 @@ async function loadSales(force = false) {
         const uData = users[agent];
         if (!uData || (uData.role || 'agent') !== 'agent') return;
 
+        // 🆕 Respect per-activity override if present, otherwise default
         if (item.status === 'pickup') {
-          totalPickupIncentives += uData.pickup_incentive || 0;
+          const override = getOverrideAmount(item);
+          totalPickupIncentives += (override !== null) ? override : (uData.pickup_incentive || 0);
         } else if (item.status === 'rejected' && Boolean(item.incentive_approved)) {
-          totalRejectIncentives += uData.reject_incentive || 0;
+          const override = getOverrideAmount(item);
+          totalRejectIncentives += (override !== null) ? override : (uData.reject_incentive || 0);
         }
       });
 
@@ -2878,12 +2895,7 @@ function clearDepositDateFilter() {
   showToast('Date filters cleared', 'info');
 }
 
-// ────────────────────────────────────────────────────────────────
-// 🆕 updateDepositStats — now also computes Purchases (Wallet spend)
-//    and Commission Given (Coins spend), then shows Remaining balance
-// ────────────────────────────────────────────────────────────────
 async function updateDepositStats() {
-  // ---- Totals from deposit entries (unchanged behavior) ----
   let commissionCoins = 0;
   let commissionValue = 0;
   let commissionCount = 0;
@@ -2908,9 +2920,6 @@ async function updateDepositStats() {
     }
   });
 
-  // ---- NEW: Spend tracking from acquired pickups ----
-  // Wallet spend  = sum of `value` (agreed price paid to customer)
-  // Coins spend   = sum of `coins` (commission given to agent)
   let totalPurchaseCost = 0;
   let totalCoinsUsed = 0;
 
@@ -2918,7 +2927,7 @@ async function updateDepositStats() {
     const pickups = await getData('pickups', false);
     Object.values(pickups).forEach(item => {
       if (!item) return;
-      if (item.status !== 'pickup') return; // only acquired phones
+      if (item.status !== 'pickup') return;
 
       const val = Number(item.value) || 0;
       totalPurchaseCost += val;
@@ -2934,7 +2943,6 @@ async function updateDepositStats() {
   const remainingCoins = commissionCoins - totalCoinsUsed;
   const remainingCoinsValue = remainingCoins * COIN_VALUE;
 
-  // ---- Base displays (unchanged) ----
   setText('commissionBalanceCoins', commissionCoins.toLocaleString('en-IN'));
   setText('commissionBalanceValue', formatINR(commissionValue));
   setText('commissionEntryCount', commissionCount);
@@ -2946,7 +2954,6 @@ async function updateDepositStats() {
 
   setText('depositsBadge', allDeposits.length);
 
-  // ---- NEW: Inject "Remaining" breakdown inside each card ----
   injectBalanceBreakdown({
     walletTotal,
     totalPurchaseCost,
@@ -2959,7 +2966,6 @@ async function updateDepositStats() {
   });
 }
 
-// 🆕 Injects remaining-balance breakdown without touching HTML
 function injectBalanceBreakdown({
   walletTotal,
   totalPurchaseCost,
@@ -2970,7 +2976,6 @@ function injectBalanceBreakdown({
   remainingCoins,
   remainingCoinsValue
 }) {
-  // ----- Wallet card breakdown -----
   const walletCard = document.querySelector('#walletBalance')?.closest('.glass');
   if (walletCard) {
     let box = walletCard.querySelector('#walletBreakdownBox');
@@ -2999,7 +3004,6 @@ function injectBalanceBreakdown({
     `;
   }
 
-  // ----- Commission card breakdown -----
   const commissionCard = document.querySelector('#commissionBalanceCoins')?.closest('.glass');
   if (commissionCard) {
     let box = commissionCard.querySelector('#commissionBreakdownBox');
@@ -3307,6 +3311,7 @@ function refreshDeposits() {
   loadDeposits(true);
   showToast('🔄 Deposits refreshed', 'info');
 }
+
 // ================================================================
 // AGENTS
 // ================================================================
@@ -4561,6 +4566,7 @@ function computeCycleRangeForAgent(mode, uData, lastActivePayment, selectedDate)
   return { start: today, end: today };
 }
 
+// 🆕 Respects per-activity override via `getOverrideAmount(item)`.
 function computeCycleTotals({ uname, uData, cycleStart, cycleEnd, allAttendance, pickupsByAgentDate, allAdjustments }) {
   const salary = uData.salary || 0;
   const pickupInc = uData.pickup_incentive || 0;
@@ -4624,12 +4630,15 @@ function computeCycleTotals({ uname, uData, cycleStart, cycleEnd, allAttendance,
     const dayPickups = pickupsByAgentDate[key] || [];
 
     for (const ord of dayPickups) {
+      // 🆕 Per-activity override wins over the agent's default.
+      const override = getOverrideAmount(ord);
+
       if (ord.status === 'pickup') {
-        totalPickupIncentive += pickupInc;
+        totalPickupIncentive += (override !== null) ? override : pickupInc;
         agentPickupCount++;
       }
       if (ord.status === 'rejected' && Boolean(ord.incentive_approved)) {
-        totalRejectIncentive += rejectInc;
+        totalRejectIncentive += (override !== null) ? override : rejectInc;
         agentRejectCount++;
       }
       if (ord.status === 'rejected' && !Boolean(ord.incentive_approved)) {
@@ -5883,6 +5892,186 @@ async function deleteAdjustment(agent, id) {
 }
 
 // ================================================================
+// 🆕 DATE ACTIVITIES — per-activity incentive override
+//     Shows all pickup/reject activities of the selected date and lets
+//     the admin override the incentive for a single activity.
+//     The agent's default incentive (from Users) stays untouched.
+// ================================================================
+async function openDateActivitiesModal() {
+  const date = getVal('salaryDate') || getLocalYMD();
+
+  Swal.fire({
+    title: 'Loading...',
+    allowOutsideClick: false,
+    didOpen: () => Swal.showLoading()
+  });
+
+  try {
+    const [pickups, users] = await Promise.all([
+      getData('pickups', true),
+      getData('users', false)
+    ]);
+
+    const items = Object.entries(pickups)
+      .filter(([_, ord]) => {
+        if (!ord || !ord.timestamp) return false;
+        if (ord.status === 'on_hold') return false;
+        if (ord.status !== 'pickup' && ord.status !== 'rejected') return false;
+        const ds = getLocalYMD(new Date(ord.timestamp));
+        return ds === date;
+      })
+      .map(([id, ord]) => ({ id, ...ord }))
+      .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+    if (!items.length) {
+      Swal.fire({
+        icon: 'info',
+        title: 'No Activities',
+        text: `No pickup or reject activities found for ${date}.`,
+        confirmButtonColor: '#4f46e5'
+      });
+      return;
+    }
+
+    let rows = '';
+    items.forEach(item => {
+      const agentData = users[item.agent] || {};
+      const isPickup = item.status === 'pickup';
+      const isReject = item.status === 'rejected';
+
+      let defaultInc = isPickup
+        ? (agentData.pickup_incentive || 0)
+        : (agentData.reject_incentive || 0);
+
+      const hasOverride = item.custom_incentive !== undefined
+        && item.custom_incentive !== null
+        && item.custom_incentive !== '';
+      const currentInc = hasOverride ? Number(item.custom_incentive) : defaultInc;
+
+      const rejectNotApproved = isReject && !Boolean(item.incentive_approved);
+      const canEdit = !rejectNotApproved;
+
+      const typeBadge = isPickup
+        ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">📦 Pickup</span>'
+        : '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800">❌ Reject</span>';
+
+      const overrideTag = hasOverride
+        ? '<span class="ml-1 text-[9px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-bold">OVERRIDE</span>'
+        : '';
+
+      rows += `
+        <tr class="border-b border-gray-100 text-xs hover:bg-gray-50">
+          <td class="py-2.5 px-3 font-mono font-semibold text-gray-800">${item.orderId || item.id}</td>
+          <td class="py-2.5 px-3 text-gray-700">${item.agent || '—'}</td>
+          <td class="py-2.5 px-3 text-gray-600 max-w-[130px] truncate" title="${esc(item.phoneModel || '')}">${item.phoneModel || '—'}</td>
+          <td class="py-2.5 px-3">${typeBadge}${rejectNotApproved ? '<div class="text-[9px] text-amber-600 mt-0.5">Not approved</div>' : ''}</td>
+          <td class="py-2.5 px-3 font-bold text-gray-700">${formatINR(defaultInc)}</td>
+          <td class="py-2.5 px-3">
+            <div class="flex items-center gap-1">
+              <input type="number" id="inc_input_${item.id}" value="${currentInc}" min="0" step="1"
+                     class="w-20 p-1 border border-gray-300 rounded text-xs font-bold text-indigo-700 text-right"
+                     ${canEdit ? '' : 'disabled'}>
+              ${overrideTag}
+            </div>
+          </td>
+          <td class="py-2.5 px-3 text-right whitespace-nowrap">
+            ${canEdit ? `
+              <button onclick="saveIncentiveOverride('${item.id}', ${defaultInc})"
+                      class="px-2 py-1 rounded bg-indigo-50 text-indigo-700 text-[10px] font-bold border border-indigo-200 hover:bg-indigo-100">💾 Save</button>
+              ${hasOverride ? `<button onclick="resetIncentiveOverride('${item.id}')"
+                      class="px-2 py-1 rounded bg-gray-50 text-gray-600 text-[10px] font-bold border border-gray-200 hover:bg-gray-100 ml-1">↺ Reset</button>` : ''}
+            ` : '<span class="text-[10px] text-gray-400">—</span>'}
+          </td>
+        </tr>
+      `;
+    });
+
+    Swal.fire({
+      title: `📋 Activities — ${date}`,
+      width: '1150px',
+      html: `
+        <div class="text-left font-sans">
+          <div class="mb-3 p-2.5 bg-indigo-50 border border-indigo-100 rounded-xl text-xs text-gray-700 leading-relaxed">
+            <strong>ℹ️ Note:</strong> Yahan selected date ki pickup/reject activities ke individual incentive override kar sakte hain.
+            Default incentive agent profile mein set hai. Reset karne par wapas default use hoga.
+            <br><strong>Important:</strong> Ye change sirf us specific activity par apply hoga — agent ka default incentive change nahi hoga.
+          </div>
+          <div class="max-h-[480px] overflow-y-auto border border-gray-200 rounded-xl">
+            <table class="w-full text-left">
+              <thead class="bg-gray-50 border-b border-gray-200 text-gray-600 text-[11px] uppercase font-bold sticky top-0">
+                <tr>
+                  <th class="py-2.5 px-3">Order ID</th>
+                  <th class="py-2.5 px-3">Agent</th>
+                  <th class="py-2.5 px-3">Model</th>
+                  <th class="py-2.5 px-3">Type</th>
+                  <th class="py-2.5 px-3">Default</th>
+                  <th class="py-2.5 px-3">Incentive (₹)</th>
+                  <th class="py-2.5 px-3 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+          <div class="mt-3 text-[11px] text-gray-500">
+            Total activities: <strong>${items.length}</strong>
+          </div>
+        </div>
+      `,
+      showConfirmButton: false,
+      showCloseButton: true
+    });
+  } catch (e) {
+    console.error(e);
+    Swal.fire({ icon: 'error', title: 'Error', text: 'Failed to load activities.' });
+  }
+}
+
+async function saveIncentiveOverride(orderId, defaultInc) {
+  const input = document.getElementById('inc_input_' + orderId);
+  if (!input) return;
+
+  const val = input.value.trim();
+  const num = Number(val);
+
+  if (val === '' || isNaN(num) || num < 0) {
+    showToast('Enter a valid amount', 'error');
+    return;
+  }
+
+  try {
+    if (num === Number(defaultInc)) {
+      // Same as default → remove override
+      await db.ref('pickups/' + orderId + '/custom_incentive').remove();
+      showToast('✅ Reset to default', 'success');
+    } else {
+      await db.ref('pickups/' + orderId).update({ custom_incentive: num });
+      showToast(`✅ Incentive set to ${formatINR(num)} for this activity only`, 'success');
+    }
+
+    invalidate('pickups');
+    loadSalaryData(true);
+
+    setTimeout(() => openDateActivitiesModal(), 300);
+  } catch (e) {
+    console.error(e);
+    showToast('Failed to save', 'error');
+  }
+}
+
+async function resetIncentiveOverride(orderId) {
+  try {
+    await db.ref('pickups/' + orderId + '/custom_incentive').remove();
+    showToast('↺ Reset to default', 'success');
+    invalidate('pickups');
+    loadSalaryData(true);
+    setTimeout(() => openDateActivitiesModal(), 300);
+  } catch (e) {
+    console.error(e);
+    showToast('Failed to reset', 'error');
+  }
+}
+
+// ================================================================
 // GLOBAL SEARCH
 // ================================================================
 async function openGlobalSearch() {
@@ -6254,13 +6443,23 @@ setInterval(updateClock, 1000);
 updateClock();
 
 // ================================================================
-// INJECT SALARY HEADER BUTTONS (Adjustments + All Paid History)
+// INJECT SALARY HEADER BUTTONS (Date Activities + Adjustments + All Paid History)
 // ================================================================
 function injectSalaryHeaderButtons() {
   const recalcBtn = document.querySelector('button[onclick="recalculateAllSalary()"]');
   if (!recalcBtn || !recalcBtn.parentElement) return;
 
   const parent = recalcBtn.parentElement;
+
+  // 🆕 "Date Activities" button — insert just before Recalculate
+  if (!$('dateActivitiesBtn')) {
+    const dateBtn = document.createElement('button');
+    dateBtn.id = 'dateActivitiesBtn';
+    dateBtn.className = 'btn-action primary';
+    dateBtn.innerHTML = '<i data-lucide="calendar-check"></i> Date Activities';
+    dateBtn.onclick = () => openDateActivitiesModal();
+    parent.insertBefore(dateBtn, recalcBtn);
+  }
 
   if (!$('globalAdjustBtn')) {
     const adjBtn = document.createElement('button');
@@ -6319,7 +6518,7 @@ document.addEventListener('DOMContentLoaded', () => {
     salaryToggleBar.appendChild(btn);
   }
 
-  // Inject global salary header buttons (Adjustments + Paid History)
+  // Inject global salary header buttons
   injectSalaryHeaderButtons();
 
   const agentRole = document.querySelector('input[name="regRole"][value="agent"]');
