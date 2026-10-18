@@ -2982,22 +2982,22 @@ function injectBalanceBreakdown({
     if (!box) {
       box = document.createElement('div');
       box.id = 'walletBreakdownBox';
-      box.className = 'mt-3 pt-3 border-t border-emerald-200 text-[11px] space-y-1';
+      box.className = 'mt-2 sm:mt-3 pt-2 sm:pt-3 border-t border-emerald-200 text-[10px] sm:text-[11px] space-y-0.5 sm:space-y-1';
       walletCard.appendChild(box);
     }
 
     const rwColor = remainingWallet >= 0 ? 'text-emerald-800' : 'text-rose-700';
 
     box.innerHTML = `
-      <div class="flex items-center justify-between">
+      <div class="flex items-center justify-between gap-2">
         <span class="text-gray-600">Total Deposited</span>
         <span class="font-bold text-emerald-800">${formatINR(walletTotal)}</span>
       </div>
-      <div class="flex items-center justify-between">
-        <span class="text-gray-600">− Purchases (Agreed Price)</span>
+      <div class="flex items-center justify-between gap-2">
+        <span class="text-gray-600">− Purchases</span>
         <span class="font-bold text-rose-600">-${formatINR(totalPurchaseCost)}</span>
       </div>
-      <div class="flex items-center justify-between border-t border-emerald-200 pt-1 mt-1">
+      <div class="flex items-center justify-between border-t border-emerald-200 pt-1 mt-1 gap-2">
         <span class="font-bold text-gray-700">Remaining Wallet</span>
         <span class="font-black ${rwColor}">${formatINR(remainingWallet)}</span>
       </div>
@@ -3010,26 +3010,26 @@ function injectBalanceBreakdown({
     if (!box) {
       box = document.createElement('div');
       box.id = 'commissionBreakdownBox';
-      box.className = 'mt-3 pt-3 border-t border-amber-200 text-[11px] space-y-1';
+      box.className = 'mt-2 sm:mt-3 pt-2 sm:pt-3 border-t border-amber-200 text-[10px] sm:text-[11px] space-y-0.5 sm:space-y-1';
       commissionCard.appendChild(box);
     }
 
     const rcColor = remainingCoins >= 0 ? 'text-amber-800' : 'text-rose-700';
 
     box.innerHTML = `
-      <div class="flex items-center justify-between">
-        <span class="text-gray-600">Total Coins Deposited</span>
+      <div class="flex items-center justify-between gap-2">
+        <span class="text-gray-600">Total Coins</span>
         <span class="font-bold text-amber-800">${commissionCoins.toLocaleString('en-IN')} 🪙</span>
       </div>
-      <div class="flex items-center justify-between">
+      <div class="flex items-center justify-between gap-2">
         <span class="text-gray-600">− Commission Given</span>
         <span class="font-bold text-rose-600">-${totalCoinsUsed.toLocaleString('en-IN')} 🪙</span>
       </div>
-      <div class="flex items-center justify-between border-t border-amber-200 pt-1 mt-1">
-        <span class="font-bold text-gray-700">Remaining Coins</span>
+      <div class="flex items-center justify-between border-t border-amber-200 pt-1 mt-1 gap-2">
+        <span class="font-bold text-gray-700">Remaining</span>
         <span class="font-black ${rcColor}">${remainingCoins.toLocaleString('en-IN')} 🪙</span>
       </div>
-      <div class="text-right text-[10px] text-gray-500 mt-0.5">≈ ${formatINR(remainingCoinsValue)}</div>
+      <div class="text-right text-[9px] sm:text-[10px] text-gray-500 mt-0.5">≈ ${formatINR(remainingCoinsValue)}</div>
     `;
   }
 }
@@ -3072,25 +3072,27 @@ function renderDepositsTable() {
     if (isCommission) {
       const coins = Number(item.coins) || 0;
       const value = Number(item.amount) || 0;
-      accountBadge = `<span class="badge-status" style="background:#fef3c7;color:#92400e;border:1px solid #fde68a;">🪙 Commission</span>`;
+      accountBadge = `<span class="badge-status" style="background:#fef3c7;color:#92400e;border:1px solid #fde68a;font-size:9px;">🪙</span>`;
       amountCell = `
-        <div class="font-bold text-amber-700">${coins.toLocaleString('en-IN')} 🪙</div>
-        <div class="text-[11px] text-gray-500 font-normal">${formatINR(value)}</div>
+        <div class="font-bold text-amber-700 text-xs sm:text-sm">${coins.toLocaleString('en-IN')} 🪙</div>
+        <div class="text-[10px] sm:text-[11px] text-gray-500 font-normal">${formatINR(value)}</div>
       `;
     } else {
-      accountBadge = `<span class="badge-status" style="background:#d1fae5;color:#065f46;border:1px solid #a7f3d0;">💼 Wallet</span>`;
-      amountCell = `<span class="font-bold text-emerald-600">${formatINR(item.amount || 0)}</span>`;
+      accountBadge = `<span class="badge-status" style="background:#d1fae5;color:#065f46;border:1px solid #a7f3d0;font-size:9px;">💼</span>`;
+      amountCell = `<span class="font-bold text-emerald-600 text-xs sm:text-sm">${formatINR(item.amount || 0)}</span>`;
     }
 
     html += `
       <tr class="order-row border-b border-gray-50">
-        <td class="py-3 px-4 text-gray-400 font-mono text-xs">${num}</td>
-        <td class="py-3 px-4">${accountBadge}</td>
-        <td class="py-3 px-4">${amountCell}</td>
-        <td class="py-3 px-4 text-gray-600 text-sm">${item.description || '—'}</td>
-        <td class="py-3 px-4 hidden sm:table-cell text-xs text-gray-500">${item.date || '—'}</td>
-        <td class="py-3 px-4 hidden md:table-cell text-xs text-gray-400">${item.timestamp ? new Date(item.timestamp).toLocaleString() : '—'}</td>
-        <td class="py-3 px-4">
+        <td class="py-2 sm:py-3 px-2 sm:px-4 text-gray-400 font-mono text-[10px] sm:text-xs">${num}</td>
+        <td class="py-2 sm:py-3 px-2 sm:px-4">${accountBadge}</td>
+        <td class="py-2 sm:py-3 px-2 sm:px-4">${amountCell}</td>
+        <td class="py-2 sm:py-3 px-2 sm:px-4 text-gray-600 text-[11px] sm:text-sm">
+          <div class="line-clamp-2">${item.description || '—'}</div>
+        </td>
+        <td class="py-2 sm:py-3 px-2 sm:px-4 hidden sm:table-cell text-xs text-gray-500">${item.date || '—'}</td>
+        <td class="py-2 sm:py-3 px-2 sm:px-4 hidden md:table-cell text-xs text-gray-400">${item.timestamp ? new Date(item.timestamp).toLocaleString() : '—'}</td>
+        <td class="py-2 sm:py-3 px-2 sm:px-4">
           <button onclick="deleteDeposit('${item.id}')" class="btn-action delete" title="Delete"><i data-lucide="trash-2"></i></button>
         </td>
       </tr>
@@ -4714,116 +4716,116 @@ function buildSalaryCard({
   const fullyPaid = pendingAmount <= 0 && t.grandTotal > 0;
   const partiallyPaid = cycleAlreadyPaid > 0 && pendingAmount > 0;
 
-  let statusBadge = '<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800">🔴 UNPAID</span>';
-  if (fullyPaid) statusBadge = '<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">✅ FULLY PAID</span>';
-  else if (partiallyPaid) statusBadge = '<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">⏳ PARTIALLY PAID</span>';
+  let statusBadge = '<span class="px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full text-[9px] sm:text-[10px] font-bold bg-rose-100 text-rose-800">🔴 UNPAID</span>';
+  if (fullyPaid) statusBadge = '<span class="px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full text-[9px] sm:text-[10px] font-bold bg-emerald-100 text-emerald-800">✅ PAID</span>';
+  else if (partiallyPaid) statusBadge = '<span class="px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full text-[9px] sm:text-[10px] font-bold bg-amber-100 text-amber-800">⏳ PARTIAL</span>';
 
   const cycleLabel = cycleStart === cycleEnd
     ? cycleStart
     : `${cycleStart} → ${cycleEnd}`;
 
   return `
-    <div class="glass rounded-2xl p-5 shadow-sm border border-gray-100 salary-summary-card">
-      <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
-        <div>
-          <span class="font-bold text-gray-800 text-base cursor-pointer hover:text-indigo-600 hover:underline transition"
+    <div class="glass rounded-2xl p-3 sm:p-5 shadow-sm border border-gray-100 salary-summary-card">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-2 sm:mb-3">
+        <div class="min-w-0 flex-1">
+          <span class="font-bold text-gray-800 text-sm sm:text-base cursor-pointer hover:text-indigo-600 hover:underline transition break-words"
                 onclick="openRiderStatementFlow('${uname}')"
                 title="Click to view Pickup/Reject Statement">${uData.name || uname}</span>
-          <span class="text-sm text-gray-500 ml-1">(${uname})</span>
-          <span class="text-xs text-gray-400 ml-2">Joined: ${joinDateDisplay}</span>
+          <span class="text-[11px] sm:text-sm text-gray-500 ml-1">(${uname})</span>
+          <div class="text-[10px] sm:text-xs text-gray-400 mt-0.5">Joined: ${joinDateDisplay}</div>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
           ${statusBadge}
-          <span class="text-[10px] text-gray-400">${paidCyclesCount} paid cycle${paidCyclesCount !== 1 ? 's' : ''}</span>
+          <span class="text-[9px] sm:text-[10px] text-gray-400">${paidCyclesCount} paid</span>
         </div>
       </div>
 
-      <div class="mb-3 px-3 py-2 rounded-xl bg-indigo-50 border border-indigo-100 flex flex-wrap items-center justify-between gap-2 text-xs">
-        <span class="text-indigo-700 font-semibold">📅 Cycle: <strong>${cycleLabel}</strong></span>
-        ${lastPaidDate ? `<span class="text-gray-500">Last paid: <strong>${lastPaidDate}</strong></span>` : '<span class="text-gray-500">No payment yet</span>'}
+      <div class="mb-2 sm:mb-3 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg sm:rounded-xl bg-indigo-50 border border-indigo-100 flex flex-wrap items-center justify-between gap-1 sm:gap-2 text-[10px] sm:text-xs">
+        <span class="text-indigo-700 font-semibold">📅 <strong class="break-all">${cycleLabel}</strong></span>
+        ${lastPaidDate ? `<span class="text-gray-500">Last: <strong>${lastPaidDate}</strong></span>` : '<span class="text-gray-500">No payment yet</span>'}
       </div>
 
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
-        <div class="bg-gray-50 border border-gray-200 p-3 rounded-xl">
-          <div class="text-[10px] text-gray-500 font-bold uppercase tracking-wide">Base Salary</div>
-          <div class="text-base font-bold text-gray-800 mt-1">${formatINR(t.totalBaseSalary)}</div>
-          <div class="text-[10px] text-gray-400 mt-0.5">${t.presentDays} full · ${t.halfDays} half</div>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-1.5 sm:gap-2 mb-2 sm:mb-3">
+        <div class="bg-gray-50 border border-gray-200 p-2 sm:p-3 rounded-lg sm:rounded-xl">
+          <div class="text-[9px] sm:text-[10px] text-gray-500 font-bold uppercase tracking-wide">Base</div>
+          <div class="text-sm sm:text-base font-bold text-gray-800 mt-0.5 sm:mt-1">${formatINR(t.totalBaseSalary)}</div>
+          <div class="text-[9px] sm:text-[10px] text-gray-400 mt-0.5">${t.presentDays}F · ${t.halfDays}H</div>
         </div>
-        <div class="bg-blue-50 border border-blue-200 p-3 rounded-xl">
-          <div class="text-[10px] text-blue-600 font-bold uppercase tracking-wide">+ Bonus</div>
-          <div class="text-base font-bold text-blue-700 mt-1">+${formatINR(t.totalBonus)}</div>
+        <div class="bg-blue-50 border border-blue-200 p-2 sm:p-3 rounded-lg sm:rounded-xl">
+          <div class="text-[9px] sm:text-[10px] text-blue-600 font-bold uppercase tracking-wide">+ Bonus</div>
+          <div class="text-sm sm:text-base font-bold text-blue-700 mt-0.5 sm:mt-1">+${formatINR(t.totalBonus)}</div>
         </div>
-        <div class="bg-rose-50 border border-rose-200 p-3 rounded-xl">
-          <div class="text-[10px] text-rose-600 font-bold uppercase tracking-wide">− Deduction</div>
-          <div class="text-base font-bold text-rose-700 mt-1">-${formatINR(t.totalDeduction)}</div>
+        <div class="bg-rose-50 border border-rose-200 p-2 sm:p-3 rounded-lg sm:rounded-xl">
+          <div class="text-[9px] sm:text-[10px] text-rose-600 font-bold uppercase tracking-wide">− Deduct</div>
+          <div class="text-sm sm:text-base font-bold text-rose-700 mt-0.5 sm:mt-1">-${formatINR(t.totalDeduction)}</div>
         </div>
-        <div class="bg-emerald-50 border-2 border-emerald-300 p-3 rounded-xl">
-          <div class="text-[10px] text-emerald-700 font-bold uppercase tracking-wide">Grand Total</div>
-          <div class="text-lg font-black text-emerald-800 mt-1">${formatINR(t.grandTotal)}</div>
+        <div class="bg-emerald-50 border-2 border-emerald-300 p-2 sm:p-3 rounded-lg sm:rounded-xl">
+          <div class="text-[9px] sm:text-[10px] text-emerald-700 font-bold uppercase tracking-wide">Total</div>
+          <div class="text-base sm:text-lg font-black text-emerald-800 mt-0.5 sm:mt-1">${formatINR(t.grandTotal)}</div>
         </div>
       </div>
 
-      <div class="mb-3 p-3 rounded-xl bg-amber-50 border border-dashed border-amber-300">
-        <div class="flex items-center gap-2 mb-2">
-          <span class="text-[10px] font-bold text-amber-700 uppercase tracking-wide">💡 Incentives</span>
-          <span class="text-[9px] px-2 py-0.5 rounded-full bg-amber-200 text-amber-900 font-bold">Excluded from Grand Total</span>
+      <div class="mb-2 sm:mb-3 p-2 sm:p-3 rounded-lg sm:rounded-xl bg-amber-50 border border-dashed border-amber-300">
+        <div class="flex items-center gap-1 sm:gap-2 mb-1.5 sm:mb-2 flex-wrap">
+          <span class="text-[9px] sm:text-[10px] font-bold text-amber-700 uppercase tracking-wide">💡 Incentives</span>
+          <span class="text-[8px] sm:text-[9px] px-1.5 sm:px-2 py-0.5 rounded-full bg-amber-200 text-amber-900 font-bold">Excluded</span>
         </div>
-        <div class="grid grid-cols-2 gap-2">
-          <div class="bg-white p-2 rounded-lg border border-amber-200">
-            <div class="text-[10px] text-gray-500 font-semibold">📦 Pickup Incentive</div>
-            <div class="text-sm font-bold text-green-700">${formatINR(t.totalPickupIncentive)}</div>
-            <div class="text-[10px] text-gray-400">${t.agentPickupCount} pickups</div>
+        <div class="grid grid-cols-2 gap-1.5 sm:gap-2">
+          <div class="bg-white p-1.5 sm:p-2 rounded-lg border border-amber-200">
+            <div class="text-[9px] sm:text-[10px] text-gray-500 font-semibold">📦 Pickup</div>
+            <div class="text-xs sm:text-sm font-bold text-green-700">${formatINR(t.totalPickupIncentive)}</div>
+            <div class="text-[9px] sm:text-[10px] text-gray-400">${t.agentPickupCount}×</div>
           </div>
-          <div class="bg-white p-2 rounded-lg border border-amber-200">
-            <div class="text-[10px] text-gray-500 font-semibold">❌ Reject Incentive</div>
-            <div class="text-sm font-bold text-amber-700">${formatINR(t.totalRejectIncentive)}</div>
-            <div class="text-[10px] text-gray-400">${t.agentRejectCount} rejects</div>
+          <div class="bg-white p-1.5 sm:p-2 rounded-lg border border-amber-200">
+            <div class="text-[9px] sm:text-[10px] text-gray-500 font-semibold">❌ Reject</div>
+            <div class="text-xs sm:text-sm font-bold text-amber-700">${formatINR(t.totalRejectIncentive)}</div>
+            <div class="text-[9px] sm:text-[10px] text-gray-400">${t.agentRejectCount}×</div>
           </div>
         </div>
       </div>
 
-      <div class="mb-3 grid grid-cols-2 gap-2">
-        <div class="p-3 rounded-xl bg-gray-100 border border-gray-200">
-          <div class="text-[10px] text-gray-500 font-bold uppercase tracking-wide">Already Paid (this cycle)</div>
-          <div class="text-base font-bold text-gray-800 mt-1">${formatINR(cycleAlreadyPaid)}</div>
+      <div class="mb-2 sm:mb-3 grid grid-cols-2 gap-1.5 sm:gap-2">
+        <div class="p-2 sm:p-3 rounded-lg sm:rounded-xl bg-gray-100 border border-gray-200">
+          <div class="text-[9px] sm:text-[10px] text-gray-500 font-bold uppercase tracking-wide">Already Paid</div>
+          <div class="text-sm sm:text-base font-bold text-gray-800 mt-0.5 sm:mt-1">${formatINR(cycleAlreadyPaid)}</div>
         </div>
-        <div class="p-3 rounded-xl ${pendingAmount > 0 ? 'bg-rose-50 border border-rose-200' : 'bg-emerald-50 border border-emerald-200'}">
-          <div class="text-[10px] font-bold uppercase tracking-wide ${pendingAmount > 0 ? 'text-rose-600' : 'text-emerald-600'}">Pending / Current</div>
-          <div class="text-base font-black mt-1 ${pendingAmount > 0 ? 'text-rose-700' : 'text-emerald-700'}">${formatINR(pendingAmount)}</div>
+        <div class="p-2 sm:p-3 rounded-lg sm:rounded-xl ${pendingAmount > 0 ? 'bg-rose-50 border border-rose-200' : 'bg-emerald-50 border border-emerald-200'}">
+          <div class="text-[9px] sm:text-[10px] font-bold uppercase tracking-wide ${pendingAmount > 0 ? 'text-rose-600' : 'text-emerald-600'}">Pending</div>
+          <div class="text-sm sm:text-base font-black mt-0.5 sm:mt-1 ${pendingAmount > 0 ? 'text-rose-700' : 'text-emerald-700'}">${formatINR(pendingAmount)}</div>
         </div>
       </div>
 
-      <div class="flex flex-wrap items-center gap-2">
+      <div class="flex flex-wrap items-center gap-1.5 sm:gap-2">
         <button onclick="openRiderStatementFlow('${uname}')"
-                class="px-4 py-2 bg-gradient-to-r from-teal-500 to-emerald-600 text-white rounded-xl text-xs font-bold shadow-md hover:shadow-lg transition flex items-center gap-1.5"
+                class="px-2.5 sm:px-4 py-1.5 sm:py-2 bg-gradient-to-r from-teal-500 to-emerald-600 text-white rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold shadow-md hover:shadow-lg transition flex items-center gap-1"
                 title="Pickup/Reject Statement">
           📋 Statement
         </button>
-        <button onclick="openPaidModal('${uname}')" class="px-4 py-2 bg-gradient-to-r from-emerald-500 to-green-600 text-white rounded-xl text-xs font-bold shadow-md hover:shadow-lg transition flex items-center gap-1.5">
-          💰 Mark as Paid
+        <button onclick="openPaidModal('${uname}')" class="px-2.5 sm:px-4 py-1.5 sm:py-2 bg-gradient-to-r from-emerald-500 to-green-600 text-white rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold shadow-md hover:shadow-lg transition flex items-center gap-1">
+          💰 Mark Paid
         </button>
-        <button onclick="openPaymentHistoryModal('${uname}')" class="px-4 py-2 bg-indigo-50 text-indigo-700 rounded-xl text-xs font-bold border border-indigo-200 hover:bg-indigo-100 transition flex items-center gap-1.5">
-          📜 Paid History
+        <button onclick="openPaymentHistoryModal('${uname}')" class="px-2.5 sm:px-4 py-1.5 sm:py-2 bg-indigo-50 text-indigo-700 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold border border-indigo-200 hover:bg-indigo-100 transition flex items-center gap-1">
+          📜 History
         </button>
-        <button onclick="openAddAdjustmentModal('${uname}')" class="px-3 py-2 bg-gray-50 text-gray-700 rounded-xl text-xs font-semibold border border-gray-200 hover:bg-gray-100 transition">
-          ➕ Adjustment
+        <button onclick="openAddAdjustmentModal('${uname}')" class="px-2 sm:px-3 py-1.5 sm:py-2 bg-gray-50 text-gray-700 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-semibold border border-gray-200 hover:bg-gray-100 transition">
+          ➕ Adj
         </button>
-        <button onclick="openAdjustmentHistoryModal('${uname}')" class="px-3 py-2 bg-purple-50 text-purple-700 rounded-xl text-xs font-bold border border-purple-200 hover:bg-purple-100 transition">
-          📋 Adj History
+        <button onclick="openAdjustmentHistoryModal('${uname}')" class="px-2 sm:px-3 py-1.5 sm:py-2 bg-purple-50 text-purple-700 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold border border-purple-200 hover:bg-purple-100 transition">
+          📋 Adj Hist
         </button>
-        <button onclick='viewAgentActivityWithPeriod("${uname}", ${periodAttr})' class="px-3 py-2 bg-gray-50 text-gray-700 rounded-xl text-xs font-semibold border border-gray-200 hover:bg-gray-100 transition">
+        <button onclick='viewAgentActivityWithPeriod("${uname}", ${periodAttr})' class="px-2 sm:px-3 py-1.5 sm:py-2 bg-gray-50 text-gray-700 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-semibold border border-gray-200 hover:bg-gray-100 transition">
           📊 Activity
         </button>
       </div>
 
-      <div class="mt-2 text-xs text-gray-400">Attendance: ${t.detailsHtml}</div>
+      <div class="mt-1.5 sm:mt-2 text-[9px] sm:text-xs text-gray-400 break-words">Attendance: ${t.detailsHtml}</div>
 
       ${t.uniquePending.length > 0 ? `
-        <div class="mt-2 pt-2 border-t border-gray-200">
-          <p class="text-xs font-bold text-amber-600">⏳ Pending Reject Approvals (${t.uniquePending.length})</p>
+        <div class="mt-1.5 sm:mt-2 pt-1.5 sm:pt-2 border-t border-gray-200">
+          <p class="text-[10px] sm:text-xs font-bold text-amber-600">⏳ Pending Rejects (${t.uniquePending.length})</p>
           <div class="flex flex-wrap gap-1 mt-1">
             ${t.uniquePending.map(pr => `
-              <span class="text-xs bg-gray-100 px-2 py-0.5 rounded flex items-center gap-1">
+              <span class="text-[10px] sm:text-xs bg-gray-100 px-1.5 sm:px-2 py-0.5 rounded flex items-center gap-1">
                 ${pr.orderId || pr.id}
                 <button onclick="toggleRejectApproval('${pr.id}', true)" class="text-green-600 font-bold">✅</button>
                 <button onclick="toggleRejectApproval('${pr.id}', false)" class="text-red-600 font-bold">❌</button>
@@ -6656,7 +6658,7 @@ async function renderAttendanceCalendarModal() {
   let calendarCells = '';
 
   for (let i = 0; i < firstDayIndex; i++) {
-    calendarCells += `<div class="p-2 min-h-[50px] bg-gray-50 rounded-lg border border-gray-100 opacity-30"></div>`;
+    calendarCells += `<div class="p-1 sm:p-2 min-h-[38px] sm:min-h-[50px] bg-gray-50 rounded-lg border border-gray-100 opacity-30"></div>`;
   }
 
   const todayStr = getLocalYMD();
@@ -6668,6 +6670,7 @@ async function renderAttendanceCalendarModal() {
 
     let bg = 'bg-white border-gray-200';
     let text = 'text-gray-400';
+    let emoji = '';
     let label = '—';
 
     if (status === 'present') {
@@ -6675,23 +6678,27 @@ async function renderAttendanceCalendarModal() {
         halfDayCount++;
         bg = 'bg-amber-50 border-amber-200';
         text = 'text-amber-800 font-bold';
-        label = '🌗 Half';
+        emoji = '🌗';
+        label = 'Half';
       } else {
         presentCount++;
         bg = 'bg-emerald-50 border-emerald-200';
         text = 'text-emerald-800 font-bold';
-        label = '✅ Present';
+        emoji = '✅';
+        label = 'Present';
       }
     } else if (status === 'absent') {
       absentCount++;
       bg = 'bg-rose-50 border-rose-200';
       text = 'text-rose-800 font-bold';
-      label = '❌ Absent';
+      emoji = '❌';
+      label = 'Absent';
     } else if (status === 'unmarked') {
       unmarkedCount++;
       bg = 'bg-gray-50 border-gray-200';
       text = 'text-gray-500 font-medium';
-      label = '⚪ None';
+      emoji = '⚪';
+      label = 'None';
     } else {
       bg = 'bg-gray-50 border-gray-100 opacity-60';
       text = 'text-gray-400';
@@ -6701,13 +6708,13 @@ async function renderAttendanceCalendarModal() {
     const isToday = dateStr === todayStr;
 
     calendarCells += `
-      <div class="p-2 min-h-[55px] rounded-xl border ${bg} flex flex-col justify-between cursor-pointer hover:shadow-md transition"
+      <div class="p-1 sm:p-2 min-h-[40px] sm:min-h-[55px] rounded-lg sm:rounded-xl border ${bg} flex flex-col justify-between cursor-pointer hover:shadow-md transition"
            onclick="quickToggleDay('${username}', '${dateStr}', '${status}', ${att.half_day === true})">
-        <div class="flex justify-between items-center text-xs">
-          <span class="font-bold ${isToday ? 'px-1.5 py-0.5 bg-indigo-600 text-white rounded-full' : 'text-gray-700'}">${d}</span>
-          ${att.timestamp ? `<span class="text-[9px] text-gray-400">${new Date(att.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>` : ''}
+        <div class="flex justify-between items-center text-[10px] sm:text-xs">
+          <span class="font-bold ${isToday ? 'px-1 sm:px-1.5 py-0.5 bg-indigo-600 text-white rounded-full text-[9px] sm:text-[10px]' : 'text-gray-700'}">${d}</span>
+          ${att.timestamp ? `<span class="hidden sm:inline text-[9px] text-gray-400">${new Date(att.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>` : ''}
         </div>
-        <div class="text-[11px] mt-1 ${text}">${label}</div>
+        <div class="text-[9px] sm:text-[11px] mt-0.5 sm:mt-1 ${text} leading-tight">${emoji}<span class="hidden sm:inline"> ${label}</span></div>
       </div>
     `;
   }
@@ -6720,57 +6727,57 @@ async function renderAttendanceCalendarModal() {
 
   const html = `
     <div class="text-left font-sans">
-      <div class="flex flex-wrap items-center justify-between gap-2 mb-4 pb-3 border-b border-gray-100">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-3 sm:mb-4 pb-2 sm:pb-3 border-b border-gray-100">
         <div class="flex items-center gap-2">
-          <label class="text-xs font-semibold text-gray-600">Agent:</label>
-          <select id="cal_agent_select" onchange="currentCalendarAgent=this.value; renderAttendanceCalendarModal();" class="p-1.5 border border-gray-300 rounded-lg text-xs font-bold text-gray-800 bg-white">
+          <label class="text-[10px] sm:text-xs font-semibold text-gray-600">Agent:</label>
+          <select id="cal_agent_select" onchange="currentCalendarAgent=this.value; renderAttendanceCalendarModal();" class="p-1 sm:p-1.5 border border-gray-300 rounded-lg text-[10px] sm:text-xs font-bold text-gray-800 bg-white max-w-[140px] sm:max-w-none">
             ${agentSelectOptions}
           </select>
         </div>
 
-        <div class="flex items-center gap-2">
-          <button onclick="changeCalendarMonth(-1)" class="px-2.5 py-1 rounded-lg border border-gray-200 hover:bg-gray-100 font-bold text-gray-700 text-xs">◀ Prev</button>
-          <span class="font-bold text-sm text-gray-800 min-w-[130px] text-center">${monthLabel}</span>
-          <button onclick="changeCalendarMonth(1)" class="px-2.5 py-1 rounded-lg border border-gray-200 hover:bg-gray-100 font-bold text-gray-700 text-xs">Next ▶</button>
+        <div class="flex items-center gap-1 sm:gap-2">
+          <button onclick="changeCalendarMonth(-1)" class="px-1.5 sm:px-2.5 py-1 rounded-lg border border-gray-200 hover:bg-gray-100 font-bold text-gray-700 text-[10px] sm:text-xs">◀ <span class="hidden sm:inline">Prev</span></button>
+          <span class="font-bold text-[11px] sm:text-sm text-gray-800 min-w-[90px] sm:min-w-[130px] text-center">${monthLabel}</span>
+          <button onclick="changeCalendarMonth(1)" class="px-1.5 sm:px-2.5 py-1 rounded-lg border border-gray-200 hover:bg-gray-100 font-bold text-gray-700 text-[10px] sm:text-xs"><span class="hidden sm:inline">Next</span> ▶</button>
         </div>
       </div>
 
-      <div class="grid grid-cols-4 gap-2 mb-4 text-center">
-        <div class="p-2 bg-emerald-50 border border-emerald-100 rounded-xl">
-          <div class="text-[10px] text-emerald-600 font-semibold uppercase">Present</div>
-          <div class="text-lg font-bold text-emerald-800">${presentCount}</div>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-1.5 sm:gap-2 mb-3 sm:mb-4 text-center">
+        <div class="p-1.5 sm:p-2 bg-emerald-50 border border-emerald-100 rounded-lg sm:rounded-xl">
+          <div class="text-[9px] sm:text-[10px] text-emerald-600 font-semibold uppercase">Present</div>
+          <div class="text-sm sm:text-lg font-bold text-emerald-800">${presentCount}</div>
         </div>
-        <div class="p-2 bg-amber-50 border border-amber-100 rounded-xl">
-          <div class="text-[10px] text-amber-600 font-semibold uppercase">Half Day</div>
-          <div class="text-lg font-bold text-amber-800">${halfDayCount}</div>
+        <div class="p-1.5 sm:p-2 bg-amber-50 border border-amber-100 rounded-lg sm:rounded-xl">
+          <div class="text-[9px] sm:text-[10px] text-amber-600 font-semibold uppercase">Half Day</div>
+          <div class="text-sm sm:text-lg font-bold text-amber-800">${halfDayCount}</div>
         </div>
-        <div class="p-2 bg-rose-50 border border-rose-100 rounded-xl">
-          <div class="text-[10px] text-rose-600 font-semibold uppercase">Absent</div>
-          <div class="text-lg font-bold text-rose-800">${absentCount}</div>
+        <div class="p-1.5 sm:p-2 bg-rose-50 border border-rose-100 rounded-lg sm:rounded-xl">
+          <div class="text-[9px] sm:text-[10px] text-rose-600 font-semibold uppercase">Absent</div>
+          <div class="text-sm sm:text-lg font-bold text-rose-800">${absentCount}</div>
         </div>
-        <div class="p-2 bg-indigo-50 border border-indigo-100 rounded-xl">
-          <div class="text-[10px] text-indigo-600 font-semibold uppercase">Attendance %</div>
-          <div class="text-lg font-bold text-indigo-800">${attendancePercent}%</div>
+        <div class="p-1.5 sm:p-2 bg-indigo-50 border border-indigo-100 rounded-lg sm:rounded-xl">
+          <div class="text-[9px] sm:text-[10px] text-indigo-600 font-semibold uppercase">Attendance %</div>
+          <div class="text-sm sm:text-lg font-bold text-indigo-800">${attendancePercent}%</div>
         </div>
       </div>
 
-      <div class="grid grid-cols-7 gap-1 text-center font-bold text-[11px] text-gray-500 mb-1">
+      <div class="grid grid-cols-7 gap-0.5 sm:gap-1 text-center font-bold text-[9px] sm:text-[11px] text-gray-500 mb-1">
         <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
       </div>
 
-      <div class="grid grid-cols-7 gap-1.5 max-h-[380px] overflow-y-auto no-scrollbar p-1">
+      <div class="grid grid-cols-7 gap-1 sm:gap-1.5 max-h-[320px] sm:max-h-[380px] overflow-y-auto no-scrollbar p-0.5 sm:p-1">
         ${calendarCells}
       </div>
 
-      <div class="text-[10px] text-gray-400 mt-3 text-center">
-        💡 Click on any date box to instantly change or toggle status (Present / Half / Absent / Unmark).
+      <div class="text-[9px] sm:text-[10px] text-gray-400 mt-2 sm:mt-3 text-center">
+        💡 Tap any date to change status.
       </div>
     </div>
   `;
 
   Swal.fire({
-    title: '📅 Monthly Attendance Calendar',
-    width: '720px',
+    title: '<span class="text-sm sm:text-base">📅 Attendance Calendar</span>',
+    width: 'min(720px, 96vw)',
     html: html,
     showConfirmButton: false,
     showCloseButton: true
@@ -6779,12 +6786,13 @@ async function renderAttendanceCalendarModal() {
 
 async function quickToggleDay(username, dateStr, currentStatus, isHalfDay) {
   const { value: newStatus } = await Swal.fire({
-    title: `Date: ${dateStr}`,
+    title: `<span class="text-sm sm:text-base">${dateStr}</span>`,
     text: `Update status for ${username}:`,
+    width: 'min(360px, 96vw)',
     input: 'select',
     inputOptions: {
-      'present_full': '✅ Present (Full Day)',
-      'present_half': '🌗 Present (Half Day - 50%)',
+      'present_full': '✅ Present (Full)',
+      'present_half': '🌗 Half Day (50%)',
       'absent': '❌ Absent',
       'unmarked': '⚪ Unmarked'
     },
@@ -6944,10 +6952,10 @@ async function openStatementCalendarPicker(username) {
       }
 
       cells += `
-        <div class="stmt-day-tile p-1 min-h-[42px] rounded-lg border ${cls} ${ring} cursor-pointer hover:scale-105 transition flex flex-col items-center justify-center"
+        <div class="stmt-day-tile p-0.5 sm:p-1 min-h-[32px] sm:min-h-[42px] rounded-md sm:rounded-lg border ${cls} ${ring} cursor-pointer hover:scale-105 transition flex flex-col items-center justify-center"
              data-date="${dateStr}">
-          <div class="text-[11px] font-bold">${d}</div>
-          <div class="text-[10px] leading-none mt-0.5">${icon}</div>
+          <div class="text-[9px] sm:text-[11px] font-bold">${d}</div>
+          <div class="text-[8px] sm:text-[10px] leading-none mt-0.5">${icon}</div>
         </div>
       `;
     }
@@ -6965,11 +6973,11 @@ async function openStatementCalendarPicker(username) {
     const sel = document.getElementById('stmt_cal_selection');
     if (sel) {
       if (selectedStart && selectedEnd) {
-        sel.innerHTML = `<span class="text-emerald-700 font-bold">✅ Selected: ${formatDateHuman(selectedStart)} → ${formatDateHuman(selectedEnd)}</span>`;
+        sel.innerHTML = `<span class="text-emerald-700 font-bold text-[11px] sm:text-xs">✅ ${formatDateHuman(selectedStart)} → ${formatDateHuman(selectedEnd)}</span>`;
       } else if (selectedStart) {
-        sel.innerHTML = `<span class="text-teal-700 font-bold">📍 Start: ${formatDateHuman(selectedStart)} — ab END date click karein</span>`;
+        sel.innerHTML = `<span class="text-teal-700 font-bold text-[11px] sm:text-xs">📍 ${formatDateHuman(selectedStart)} — ab END date tap karein</span>`;
       } else {
-        sel.innerHTML = `<span class="text-gray-500">Click a date to START selection</span>`;
+        sel.innerHTML = `<span class="text-gray-500 text-[11px] sm:text-xs">Tap a date to START</span>`;
       }
     }
 
@@ -6993,32 +7001,32 @@ async function openStatementCalendarPicker(username) {
   };
 
   const result = await Swal.fire({
-    title: `📅 ${uData.name || username} — Attendance Calendar`,
-    width: 760,
+    title: `<span class="text-sm sm:text-base">📅 ${uData.name || username}</span>`,
+    width: 'min(760px, 96vw)',
     html: `
       <div class="text-left font-sans">
-        <div class="flex items-center justify-between mb-3 gap-2">
-          <button id="stmt_cal_prev" type="button" class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-bold text-gray-700">◀ Prev</button>
-          <span id="stmt_cal_month" class="font-bold text-base text-gray-800"></span>
-          <button id="stmt_cal_next" type="button" class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-bold text-gray-700">Next ▶</button>
+        <div class="flex items-center justify-between mb-2 sm:mb-3 gap-1 sm:gap-2">
+          <button id="stmt_cal_prev" type="button" class="px-2 sm:px-3 py-1 sm:py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-[10px] sm:text-sm font-bold text-gray-700">◀</button>
+          <span id="stmt_cal_month" class="font-bold text-xs sm:text-base text-gray-800"></span>
+          <button id="stmt_cal_next" type="button" class="px-2 sm:px-3 py-1 sm:py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-[10px] sm:text-sm font-bold text-gray-700">▶</button>
         </div>
 
-        <div class="grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-gray-500 mb-1">
+        <div class="grid grid-cols-7 gap-0.5 sm:gap-1 text-center text-[9px] sm:text-[10px] font-bold text-gray-500 mb-1">
           <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
         </div>
 
-        <div id="stmt_cal_grid" class="grid grid-cols-7 gap-1 mb-3"></div>
+        <div id="stmt_cal_grid" class="grid grid-cols-7 gap-0.5 sm:gap-1 mb-2 sm:mb-3"></div>
 
-        <div class="flex flex-wrap gap-3 text-[10px] text-gray-600 justify-center mb-2">
-          <span class="inline-flex items-center gap-1"><span class="w-3 h-3 bg-emerald-100 border border-emerald-300 rounded"></span> Present</span>
-          <span class="inline-flex items-center gap-1"><span class="w-3 h-3 bg-amber-100 border border-amber-300 rounded"></span> Half Day</span>
-          <span class="inline-flex items-center gap-1"><span class="w-3 h-3 bg-rose-100 border border-rose-300 rounded"></span> Absent</span>
-          <span class="inline-flex items-center gap-1"><span class="w-3 h-3 bg-gray-50 border border-gray-200 rounded"></span> Unmarked</span>
+        <div class="flex flex-wrap gap-1.5 sm:gap-3 text-[9px] sm:text-[10px] text-gray-600 justify-center mb-2">
+          <span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 sm:w-3 sm:h-3 bg-emerald-100 border border-emerald-300 rounded"></span> Present</span>
+          <span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 sm:w-3 sm:h-3 bg-amber-100 border border-amber-300 rounded"></span> Half</span>
+          <span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 sm:w-3 sm:h-3 bg-rose-100 border border-rose-300 rounded"></span> Absent</span>
+          <span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 sm:w-3 sm:h-3 bg-gray-50 border border-gray-200 rounded"></span> Unmarked</span>
         </div>
 
-        <div id="stmt_cal_selection" class="text-center text-xs p-2.5 bg-teal-50 border border-teal-100 rounded-xl mb-2"></div>
+        <div id="stmt_cal_selection" class="text-center text-[11px] sm:text-xs p-2 sm:p-2.5 bg-teal-50 border border-teal-100 rounded-lg sm:rounded-xl mb-2"></div>
 
-        <p class="text-[10px] text-gray-400 text-center">ℹ️ Click once to select START date · click again to select END date</p>
+        <p class="text-[9px] sm:text-[10px] text-gray-400 text-center">Tap START · then tap END date</p>
       </div>
     `,
     showCancelButton: true,
@@ -7059,29 +7067,29 @@ async function openStatementCalendarPicker(username) {
   // STEP 3: Ask model details Yes/No
   // ----------------------------------------------------------------
   const detailChoice = await Swal.fire({
-    title: '📱 Mobile Model Details?',
+    title: '<span class="text-sm sm:text-base">📱 Mobile Model Details?</span>',
+    width: 'min(440px, 96vw)',
     html: `
       <div class="text-center font-sans">
-        <p class="text-sm text-gray-600 mb-3">Statement mein <strong>mobile model</strong> ki detail chahiye?</p>
+        <p class="text-xs sm:text-sm text-gray-600 mb-3">Statement mein <strong>mobile model</strong> ki detail chahiye?</p>
         <div class="grid grid-cols-1 gap-2 text-left">
-          <div class="p-3 bg-emerald-50 border-2 border-emerald-300 rounded-xl">
-            <p class="font-bold text-emerald-800 text-sm">✅ YES — Detailed</p>
-            <p class="text-xs text-gray-600 mt-1">Har pickup/reject ka <strong>model name, order ID, date</strong> dikhega</p>
+          <div class="p-2.5 sm:p-3 bg-emerald-50 border-2 border-emerald-300 rounded-lg sm:rounded-xl">
+            <p class="font-bold text-emerald-800 text-xs sm:text-sm">✅ YES — Detailed</p>
+            <p class="text-[10px] sm:text-xs text-gray-600 mt-1">Har pickup/reject ka <strong>model, order ID, date</strong> dikhega</p>
           </div>
-          <div class="p-3 bg-gray-50 border-2 border-gray-300 rounded-xl">
-            <p class="font-bold text-gray-800 text-sm">❌ NO — Summary</p>
-            <p class="text-xs text-gray-600 mt-1">Sirf <strong>kitne pickup, kitne reject</strong> — model details nahi</p>
+          <div class="p-2.5 sm:p-3 bg-gray-50 border-2 border-gray-300 rounded-lg sm:rounded-xl">
+            <p class="font-bold text-gray-800 text-xs sm:text-sm">❌ NO — Summary</p>
+            <p class="text-[10px] sm:text-xs text-gray-600 mt-1">Sirf <strong>pickup/reject counts</strong></p>
           </div>
         </div>
       </div>
     `,
     showDenyButton: true,
     showCancelButton: false,
-    confirmButtonText: '✅ YES — Model Details',
-    denyButtonText: '❌ NO — Counts Only',
+    confirmButtonText: '✅ YES',
+    denyButtonText: '❌ NO',
     confirmButtonColor: '#059669',
-    denyButtonColor: '#64748b',
-    width: 440
+    denyButtonColor: '#64748b'
   });
 
   if (detailChoice.isDismissed) return;

@@ -617,6 +617,197 @@
             color: #065f46;
             box-shadow: 0 6px 16px rgba(16, 185, 129, 0.22);
         }
+
+        /* ================================================================ */
+        /* 📱 MOBILE RESPONSIVENESS — SAFE, NON-BREAKING OVERRIDES           */
+        /* Desktop UI completely untouched — only @media max-width 640px     */
+        /* ================================================================ */
+        @media (max-width: 640px) {
+            main { padding-left: 0.75rem !important; padding-right: 0.75rem !important; }
+
+            .swal2-popup {
+                width: 94vw !important;
+                max-width: 94vw !important;
+                padding: 0.75rem !important;
+                border-radius: 14px !important;
+            }
+            .swal2-title {
+                font-size: 1rem !important;
+                padding: 0.5rem 0.5rem 0.25rem !important;
+                line-height: 1.3 !important;
+            }
+            .swal2-html-container {
+                font-size: 0.8rem !important;
+                margin: 0.25rem 0 !important;
+                padding: 0 !important;
+                overflow-x: hidden !important;
+            }
+            .swal2-close {
+                font-size: 1.6rem !important;
+                top: 0.2rem !important;
+                right: 0.2rem !important;
+            }
+
+            .swal2-html-container table { font-size: 10px !important; }
+            .swal2-html-container th,
+            .swal2-html-container td { padding: 5px 4px !important; }
+
+            .swal2-html-container [class*="max-h-"] {
+                max-height: 50vh !important;
+            }
+
+            .swal2-actions {
+                padding: 0.5rem 0 !important;
+                gap: 6px !important;
+                flex-wrap: wrap !important;
+            }
+            .swal2-actions button {
+                flex: 1 1 auto !important;
+                min-width: 90px !important;
+                font-size: 12px !important;
+                padding: 8px 10px !important;
+                margin: 0 !important;
+            }
+
+            .stmt-day-tile {
+                min-height: 30px !important;
+                padding: 1px !important;
+                font-size: 9px !important;
+            }
+            .stmt-day-tile > div:first-child { font-size: 10px !important; }
+            .stmt-day-tile > div:nth-child(2) { font-size: 8px !important; }
+
+            .salary-summary-card { padding: 0.75rem !important; }
+            .salary-summary-card .grid-cols-4,
+            .salary-summary-card .sm\\:grid-cols-4 {
+                grid-template-columns: repeat(2, 1fr) !important;
+                gap: 6px !important;
+            }
+
+            .salary-global-stats {
+                grid-template-columns: repeat(2, 1fr) !important;
+                gap: 6px !important;
+            }
+            .salary-global-stats .stat-box { padding: 8px 6px !important; }
+            .salary-global-stats .stat-box .num { font-size: 16px !important; }
+            .salary-global-stats .stat-box .label { font-size: 9px !important; }
+
+            .deposit-stats {
+                grid-template-columns: repeat(2, 1fr) !important;
+                gap: 6px !important;
+            }
+            .deposit-stats .stat-box { padding: 8px 6px !important; }
+            .deposit-stats .stat-box .num { font-size: 16px !important; }
+            .deposit-stats .stat-box .label { font-size: 9px !important; }
+
+            .detail-grid { grid-template-columns: 1fr !important; }
+            #detailContent { padding: 0.75rem !important; }
+            #detailContent .detail-item { padding: 8px 10px !important; }
+
+            .table-wrap {
+                overflow-x: auto !important;
+                -webkit-overflow-scrolling: touch !important;
+            }
+            .table-wrap table { min-width: 640px; }
+            .table-wrap th,
+            .table-wrap td {
+                padding: 8px 8px !important;
+                font-size: 11px !important;
+            }
+
+            .filter-chip {
+                padding: 3px 10px !important;
+                font-size: 11px !important;
+            }
+
+            .btn-action {
+                padding: 5px 9px !important;
+                font-size: 11px !important;
+            }
+            .btn-action i { width: 14px !important; height: 14px !important; }
+
+            #detailActions, #detailSaveActions {
+                padding: 0.6rem !important;
+                gap: 6px !important;
+                flex-wrap: wrap !important;
+            }
+            #detailActions button, #detailSaveActions button {
+                flex: 1 1 auto !important;
+                min-width: 80px !important;
+                font-size: 11px !important;
+                padding: 8px 8px !important;
+            }
+
+            .salary-toggle-btn {
+                padding: 5px 8px !important;
+                font-size: 10.5px !important;
+                white-space: nowrap !important;
+            }
+
+            h2.text-2xl { font-size: 1.25rem !important; line-height: 1.3 !important; }
+            h2.text-xl  { font-size: 1.05rem !important; }
+            .text-xl    { font-size: 1.05rem !important; }
+            .text-lg    { font-size: 0.98rem !important; }
+
+            .sidebar { max-width: 280px !important; }
+
+            .live-search-dropdown { max-height: 200px !important; }
+            .live-search-dropdown .dropdown-item {
+                padding: 0.5rem 0.75rem !important;
+                flex-wrap: wrap !important;
+                gap: 4px !important;
+            }
+
+            .edit-field, .status-select,
+            .agent-form input, .agent-form select,
+            .deposit-form input, .deposit-form textarea,
+            .sell-modal input {
+                font-size: 14px !important;
+                padding: 8px 10px !important;
+            }
+
+            #commissionBalanceCoins,
+            #walletBalance {
+                font-size: 1.5rem !important;
+            }
+
+            #depositAccountToggle { gap: 6px !important; }
+            .deposit-account-btn {
+                padding: 10px 10px !important;
+                gap: 8px !important;
+            }
+            .deposit-account-btn .text-2xl { font-size: 1.25rem !important; }
+
+            .flex.flex-wrap.items-center.gap-2 input[type="date"] {
+                flex: 1 1 45% !important;
+                min-width: 120px !important;
+            }
+
+            .glass, .stat-card, .salary-summary-card {
+                overflow-wrap: break-word !important;
+                word-break: break-word !important;
+            }
+        }
+
+        /* ===== Very narrow screens (iPhone SE, small Androids) ===== */
+        @media (max-width: 400px) {
+            .salary-global-stats { grid-template-columns: 1fr !important; }
+            .deposit-stats { grid-template-columns: 1fr !important; }
+
+            .salary-toggle-btn {
+                font-size: 10px !important;
+                padding: 4px 7px !important;
+            }
+
+            .swal2-popup {
+                width: 96vw !important;
+                max-width: 96vw !important;
+                padding: 0.6rem !important;
+            }
+            .swal2-title { font-size: 0.95rem !important; }
+
+            h2.text-2xl { font-size: 1.1rem !important; }
+        }
     </style>
 </head>
 <body>
@@ -835,7 +1026,7 @@
                 </div>
             </div>
 
-            <!-- ===== 5.3: Stats Grid (Row 3 - Final Net Profit & more) ===== -->
+            <!-- ===== 5.3: Stats Grid (Row 3) ===== -->
             <div class="grid grid-cols-1 sm:grid-cols-5 gap-3 sm:gap-4 mb-6">
                 <div class="stat-card glass rounded-2xl p-4 shadow-sm col-span-1 sm:col-span-2 md:col-span-1">
                     <div class="flex items-center gap-3">
@@ -1256,7 +1447,6 @@
                     Add Deposit
                 </h3>
 
-                <!-- Account Type Selector -->
                 <div class="mb-5">
                     <label class="block text-xs font-bold text-gray-600 mb-2 uppercase tracking-wide">Account Type *</label>
                     <div class="grid grid-cols-2 gap-3" id="depositAccountToggle">
@@ -1281,7 +1471,6 @@
                 </div>
 
                 <form id="depositForm" class="deposit-form grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <!-- Amount (adapts to account type) -->
                     <div class="field-group" id="depositAmountWrapper">
                         <label id="depositAmountLabel">Coins <span class="text-red-500">*</span></label>
                         <input type="number" id="depositAmount" placeholder="Enter coins quantity" step="1" min="1" required />
@@ -1315,7 +1504,7 @@
                 </form>
             </div>
 
-            <!-- Deposits History (with account filter) -->
+            <!-- Deposits History -->
             <div class="glass rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                 <div class="p-4 border-b border-gray-100">
                     <div class="flex flex-wrap items-center gap-2">
@@ -1389,7 +1578,6 @@
                     </div>
                 </div>
 
-                <!-- Daily Attendance Cards / List -->
                 <div id="attendanceList" class="space-y-3 max-h-[700px] overflow-y-auto no-scrollbar">
                     <div class="text-center py-6 text-gray-400">Select date or click refresh...</div>
                 </div>
@@ -1419,7 +1607,6 @@
                 </div>
             </div>
 
-            <!-- ===== 13.1: Global Stats ===== -->
             <div id="salaryGlobalStats" class="salary-global-stats">
                 <div class="stat-box"><div class="num green" id="globalPickups">0</div><div class="label">Total Pickups</div></div>
                 <div class="stat-box"><div class="num red" id="globalRejects">0</div><div class="label">Total Rejects</div></div>
@@ -1427,7 +1614,6 @@
                 <div class="stat-box"><div class="num purple" id="globalEarnings">₹0</div><div class="label">Grand Earnings</div></div>
             </div>
 
-            <!-- ===== 13.2: Salary Container ===== -->
             <div id="salaryContainer" class="space-y-4">
                 <div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">Select a view and click Load</p></div>
             </div>
@@ -1445,7 +1631,6 @@
               <button onclick="loadAgents()" class="btn-action view"><i data-lucide="refresh-cw"></i> Refresh</button>
           </div>
 
-          <!-- ===== 14.1: Register Agent Form ===== -->
           <div class="glass rounded-2xl p-5 shadow-sm border border-gray-100 mb-6">
               <h3 class="font-bold text-gray-800 mb-4 flex items-center gap-2">
                   <i data-lucide="user-plus" class="w-5 h-5 text-indigo-600"></i>
@@ -1507,7 +1692,6 @@
               </form>
           </div>
 
-          <!-- ===== 14.2: Agents Table ===== -->
           <div class="glass rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
               <div class="table-wrap">
                   <table class="w-full text-sm">
