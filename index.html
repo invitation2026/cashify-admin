@@ -1260,6 +1260,12 @@
                     <button onclick="applyInventorySearch()" class="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition">Search</button>
                     <button onclick="clearInventorySearch()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-semibold hover:bg-gray-200 transition">Clear</button>
                 </div>
+                <div class="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-gray-100">
+                    <span class="text-xs font-bold text-gray-500 mr-1">Source:</span>
+                    <button class="filter-chip active" data-inventory-type-filter="all" onclick="setInventoryTypeFilter('all')">All inventory</button>
+                    <button class="filter-chip" data-inventory-type-filter="regular" onclick="setInventoryTypeFilter('regular')">Order pickups</button>
+                    <button class="filter-chip" data-inventory-type-filter="outside" onclick="setInventoryTypeFilter('outside')">Outside pickups</button>
+                </div>
             </div>
 
             <!-- ===== 9.2: Inventory Table ===== -->
@@ -1519,6 +1525,14 @@
                         <input type="date" id="depositDateTo" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400" />
                         <button onclick="applyDepositDateFilter()" class="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition">Apply</button>
                         <button onclick="clearDepositDateFilter()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-semibold hover:bg-gray-200 transition">Clear</button>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-gray-100">
+                        <span class="text-xs font-bold text-gray-500 mr-1">Added On:</span>
+                        <input type="date" id="depositAddedFrom" aria-label="Added on date from" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400" />
+                        <span class="text-xs text-gray-400">to</span>
+                        <input type="date" id="depositAddedTo" aria-label="Added on date to" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400" />
+                        <button onclick="applyDepositAddedFilter()" class="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition">Apply</button>
+                        <button onclick="clearDepositAddedFilter()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-semibold hover:bg-gray-200 transition">Clear</button>
                     </div>
                 </div>
                 <div class="table-wrap">
