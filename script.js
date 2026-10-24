@@ -2624,6 +2624,16 @@ async function saveEdit() {
     updated.hold_reason = null;
   }
 
+  // Changing the IMEI must not introduce a duplicate in inventory / outside pickups.
+  const previousImei = String((editData && editData.imei) || '').trim();
+  if (imei && imei !== previousImei) {
+    const duplicate = await findAdminImeiDuplicate(imei, detailOrderId);
+    if (duplicate) {
+      await showAdminDuplicateImeiWarning(imei, duplicate);
+      return;
+    }
+  }
+
   const confirm = await Swal.fire({
     title: 'Save Changes?',
     icon: 'question',
@@ -7938,6 +7948,70 @@ async function viewOutsidePickup(pickupId) {
   }
 }
 
+// ---- IMEI duplicate guard (shared by approval / edit / inventory edit) ----
+// IMEI is the only duplicate key. Rejected outside pickups are excluded so a
+// rejected phone can be re-entered, and the record being edited is excluded.
+async function findAdminImeiDuplicate(imei, excludePickupId) {
+  const target = String(imei || '').trim();
+  if (!target) return null;
+
+  try {
+    const snap = await db.ref('pickups').once('value');
+    const all = snap.val() || {};
+    for (const [id, rec] of Object.entries(all)) {
+      if (!rec) continue;
+      if (excludePickupId && id === excludePickupId) continue;
+      if ((rec.status || '') !== 'pickup') continue;
+      if (String(rec.imei || '').trim() !== target) continue;
+      return {
+        pickupId: id,
+        phoneModel: rec.phoneModel || '',
+        status: 'Pickup Completed',
+        rider: rec.rider || rec.agent || '',
+        date: rec.date || rec.timestampIST || ''
+      };
+    }
+  } catch (e) { console.warn('Inventory duplicate check skipped:', e); }
+
+  try {
+    const snap = await db.ref('outside_pickups').once('value');
+    const all = snap.val() || {};
+    for (const [id, rec] of Object.entries(all)) {
+      if (!rec) continue;
+      if (excludePickupId && id === excludePickupId) continue;
+      if ((rec.status || 'pending') === 'rejected') continue;
+      if (String(rec.imei || '').trim() !== target) continue;
+      return {
+        pickupId: id,
+        phoneModel: rec.phoneModel || '',
+        status: rec.status === 'approved' ? 'Approved (in inventory)' : 'Pending Approval',
+        rider: rec.rider || rec.agentName || rec.agent || '',
+        date: rec.date || rec.timestampIST || ''
+      };
+    }
+  } catch (e) { console.warn('Outside pickup duplicate check skipped:', e); }
+
+  return null;
+}
+
+async function showAdminDuplicateImeiWarning(imei, duplicate) {
+  await Swal.fire({
+    icon: 'warning',
+    title: 'Duplicate Entry: This IMEI number already exists.',
+    html: `
+      <div class="text-left text-sm space-y-1">
+        <p>IMEI: <strong class="font-mono">${esc(imei)}</strong></p>
+        <p>Existing Model: <strong>${esc(duplicate.phoneModel || '—')}</strong></p>
+        <p>Existing Pickup ID: <strong class="font-mono">${esc(duplicate.pickupId)}</strong></p>
+        <p>Status: <strong>${esc(duplicate.status)}</strong></p>
+        ${duplicate.rider ? `<p>Rider: <strong>${esc(duplicate.rider)}</strong></p>` : ''}
+        ${duplicate.date ? `<p class="text-xs text-gray-500">Date: ${esc(duplicate.date)}</p>` : ''}
+        <p class="text-xs text-red-600 mt-2">This change was NOT saved. The same IMEI cannot be added twice.</p>
+      </div>`,
+    confirmButtonColor: '#dc2626'
+  });
+}
+
 async function approveOutsidePickup(pickupId) {
   if (!isValidOutsidePickupId(pickupId)) {
     showToast('Invalid outside pickup ID', 'error');
@@ -7945,6 +8019,8 @@ async function approveOutsidePickup(pickupId) {
   }
 
   let approvalSaved = false;
+  let claimHeld = false;
+  let approvalImei = '';
   try {
     const snap = await db.ref(`outside_pickups/${pickupId}`).once('value');
     const item = snap.val();
@@ -7967,6 +8043,7 @@ async function approveOutsidePickup(pickupId) {
       return;
     }
     const imei = String(item.imei || '').trim();
+    approvalImei = imei;
     const [inventorySnap, existingRecordSnap] = await Promise.all([
       db.ref('pickups').once('value'),
       db.ref(`pickups/${pickupId}`).once('value')
@@ -8018,6 +8095,45 @@ async function approveOutsidePickup(pickupId) {
     if (latestRecordSnap.exists()) {
       await Swal.fire({ icon: 'warning', title: 'Pickup ID Already Exists', text: 'An inventory record already uses this pickup ID. No record was changed.', confirmButtonColor: '#4f46e5' });
       return;
+    }
+
+    // Concurrency guard: two admins must not approve legacy duplicate IMEIs
+    // at the same time. If the rules deny this node, we degrade gracefully and
+    // keep the duplicate checks above.
+    if (imei) {
+      try {
+        const nowTs = Date.now();
+        const claim = await db.ref('cashify_inventory_imei_claims/' + imei).transaction(current => {
+          if (current && typeof current === 'object') {
+            const ts = Number(current.ts) || 0;
+            if (nowTs - ts < 90 * 1000) return; // abort — another approval is running
+          }
+          return { ts: nowTs };
+        });
+        if (claim.committed) claimHeld = true;
+        else {
+          await Swal.fire({ icon: 'warning', title: 'Approval in Progress', text: 'This IMEI is being approved right now. Please retry in a moment.', confirmButtonColor: '#4f46e5' });
+          return;
+        }
+      } catch (e) {
+        console.warn('Inventory concurrency lock unavailable — continuing with duplicate checks only:', e);
+      }
+    }
+
+    // Fresh duplicate re-check after taking the lock.
+    try {
+      const invSnap = await db.ref('pickups').once('value');
+      const inv = invSnap.val() || {};
+      const dupNow = imei && Object.entries(inv).some(([id, rec]) =>
+        id !== pickupId && rec && rec.status === 'pickup' && String(rec.imei || '').trim() === imei
+      );
+      if (dupNow) {
+        if (claimHeld) db.ref('cashify_inventory_imei_claims/' + imei).remove().catch(() => {});
+        await Swal.fire({ icon: 'error', title: 'Duplicate Entry: This IMEI number already exists.', text: 'This IMEI was just added to inventory. Cannot create a duplicate entry.', confirmButtonColor: '#dc2626' });
+        return;
+      }
+    } catch (e) {
+      console.warn('Approval duplicate re-check skipped:', e);
     }
 
     const now = new Date();
@@ -8075,6 +8191,9 @@ async function approveOutsidePickup(pickupId) {
       await showOutsidePickupApprovedModal({ ...updatedSnap.val(), pickupId }, freshCount);
     }
   } catch (error) {
+    if (!approvalSaved && claimHeld && approvalImei) {
+      try { await db.ref('cashify_inventory_imei_claims/' + approvalImei).remove(); } catch (_) {}
+    }
     if (approvalSaved) {
       console.error('Pickup was approved, but its view could not be fully refreshed:', error);
       showToast('Pickup approved, but the screen could not be fully refreshed.', 'warning');
@@ -8223,6 +8342,17 @@ async function editOutsidePickup(pickupId) {
       }
     });
     if (!result.isConfirmed || !result.value) return;
+
+    // Changing the IMEI must not introduce a duplicate.
+    const newImei = String(result.value.imei || '').trim();
+    const oldImei = String(pickup.imei || '').trim();
+    if (newImei && newImei !== oldImei) {
+      const duplicate = await findAdminImeiDuplicate(newImei, pickupId);
+      if (duplicate) {
+        await showAdminDuplicateImeiWarning(newImei, duplicate);
+        return;
+      }
+    }
 
     const now = Date.now();
     const updated = await pickupRef.transaction(current => {
