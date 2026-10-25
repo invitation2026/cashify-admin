@@ -25,13 +25,14 @@ const storage = firebase.storage();
 // ================================================================
 // Enforce actual data access in Firebase rules; this client-side gate is not an authorization boundary.
 const ADMIN_SESSION_KEY = 'cashify_admin_session';
-const ADMIN_SESSION_TTL = 12 * 60 * 60 * 1000;
+const ADMIN_SESSION_TTL = 48 * 60 * 60 * 1000; // 48 hours
 
 let currentAdmin = null;
 
 function readAdminSession() {
   try {
-    const raw = sessionStorage.getItem(ADMIN_SESSION_KEY);
+    // localStorage keeps the session across tab closes and browser restarts.
+    const raw = localStorage.getItem(ADMIN_SESSION_KEY);
     if (!raw) return null;
 
     const session = JSON.parse(raw);
@@ -45,11 +46,11 @@ function readAdminSession() {
 }
 
 function writeAdminSession(session) {
-  sessionStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
+  localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
 }
 
 function clearAdminSession() {
-  sessionStorage.removeItem(ADMIN_SESSION_KEY);
+  localStorage.removeItem(ADMIN_SESSION_KEY);
 }
 
 async function attemptAdminLogin(username, password) {
