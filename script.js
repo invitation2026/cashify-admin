@@ -21,73 +21,6 @@ const db = firebase.database();
 const storage = firebase.storage();
 
 // ================================================================
-// AUTH — admin sign-in gate
-// ================================================================
-// Enforce actual data access in Firebase rules; this client-side gate is not an authorization boundary.
-const ADMIN_SESSION_KEY = 'cashify_admin_session';
-const ADMIN_SESSION_TTL = 48 * 60 * 60 * 1000; // 48 hours
-
-let currentAdmin = null;
-
-function readAdminSession() {
-  try {
-    // localStorage keeps the session across tab closes and browser restarts.
-    const raw = localStorage.getItem(ADMIN_SESSION_KEY);
-    if (!raw) return null;
-
-    const session = JSON.parse(raw);
-    if (!session || !session.username || session.role !== 'admin') return null;
-    if (!Number.isFinite(session.at) || session.at > Date.now() || Date.now() - session.at > ADMIN_SESSION_TTL) return null;
-    return session;
-  } catch (error) {
-    console.error('Unable to read the admin session.', error);
-    return null;
-  }
-}
-
-function writeAdminSession(session) {
-  localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
-}
-
-function clearAdminSession() {
-  localStorage.removeItem(ADMIN_SESSION_KEY);
-}
-
-async function attemptAdminLogin(username, password) {
-  const uname = String(username || '').trim();
-  if (!uname) throw new Error('Enter your username.');
-  if (!password) throw new Error('Enter your password.');
-
-  const snap = await db.ref('users/' + uname).once('value');
-  const user = snap.val();
-
-  if (!user) throw new Error('Username not found.');
-  if (String(user.password || '') !== String(password)) throw new Error('Incorrect password.');
-  if (String(user.role || '').toLowerCase() !== 'admin') throw new Error('This account does not have admin access.');
-  if (user.is_active === false) throw new Error('This account is inactive.');
-
-  return {
-    username: uname,
-    name: user.name || uname,
-    role: 'admin',
-    at: Date.now()
-  };
-}
-
-function renderSessionBar() {
-  if (!currentAdmin) return;
-  const nameEl = $('sidebarAdminName');
-  const roleEl = $('sidebarAdminRole');
-  if (nameEl) nameEl.textContent = currentAdmin.name || currentAdmin.username;
-  if (roleEl) roleEl.textContent = 'Admin · ' + currentAdmin.username;
-}
-
-function signOutAdmin() {
-  clearAdminSession();
-  location.reload();
-}
-
-// ================================================================
 // HELPERS
 // ================================================================
 const $ = (id) => document.getElementById(id);
@@ -172,96 +105,6 @@ function getOverrideAmount(item) {
   if (v === undefined || v === null || v === '') return null;
   const n = Number(v);
   return isNaN(n) ? null : n;
-}
-
-// ================================================================
-// VALIDATION HELPERS (IMEI + money)
-// ----------------------------------------------------------------
-// These prevent a bad edit from silently becoming 0 or from saving a
-// malformed IMEI. Existing legacy IMEI values are still allowed to stay
-// unchanged when other order fields are edited.
-// ================================================================
-function normalizeImei(value) {
-  return String(value === undefined || value === null ? '' : value).replace(/[\s-]/g, '').trim();
-}
-
-function imeiLuhnOk(digits) {
-  if (!/^\d{15}$/.test(digits)) return false;
-  let sum = 0;
-  for (let i = 0; i < 15; i++) {
-    let d = Number(digits[i]);
-    if (i % 2 === 1) {
-      d *= 2;
-      if (d > 9) d -= 9;
-    }
-    sum += d;
-  }
-  return sum % 10 === 0;
-}
-
-function inspectImei(raw) {
-  const value = normalizeImei(raw);
-
-  if (!value) {
-    return { ok: false, code: 'empty', value, message: 'IMEI is required.' };
-  }
-  if (!/^\d+$/.test(value)) {
-    return { ok: false, code: 'nondigit', value, message: 'IMEI must contain digits only.' };
-  }
-  if (value.length !== 15 && value.length !== 16) {
-    return { ok: false, code: 'length', value, message: `IMEI must be 15 digits (got ${value.length}). 16 digits is accepted for IMEISV.` };
-  }
-  if (!/^[3-9]/.test(value)) {
-    return { ok: false, code: 'leading', value, message: 'IMEI should start with a digit from 3 to 9.' };
-  }
-  if (value.length === 15 && !imeiLuhnOk(value)) {
-    return { ok: false, code: 'luhn', value, message: 'IMEI failed the checksum (Luhn) test. Re-check the digits.' };
-  }
-
-  return { ok: true, code: 'ok', value, format: value.length === 16 ? 'imeisv' : 'imei', message: '' };
-}
-
-function imeiSaveDecision(raw, original, label) {
-  const next = inspectImei(raw);
-  const previous = normalizeImei(original);
-  const changed = next.value !== previous;
-
-  if (next.ok) return { ok: true, changed, value: next.value, warn: null };
-
-  if (!changed && previous) {
-    return {
-      ok: true,
-      changed: false,
-      value: next.value,
-      warn: `${label} "${next.value}" is not a valid IMEI (${next.message}) and was kept unchanged. Correct it when you can.`
-    };
-  }
-
-  return { ok: false, changed, value: next.value, error: `${label}: ${next.message}` };
-}
-
-function parseMoneyInput(raw, label) {
-  const text = String(raw === undefined || raw === null ? '' : raw).replace(/,/g, '').trim();
-  if (!text) return { ok: true, value: 0 };
-
-  const n = Number(text);
-  if (!Number.isFinite(n)) return { ok: false, error: `${label} must be a number.` };
-  if (n < 0) return { ok: false, error: `${label} cannot be negative.` };
-  if (n > 100000000) return { ok: false, error: `${label} looks too large.` };
-
-  return { ok: true, value: Math.round(n * 100) / 100 };
-}
-
-function parseCoinsInput(raw, label) {
-  const text = String(raw === undefined || raw === null ? '' : raw).trim();
-  if (!text) return { ok: true, value: 0 };
-
-  const n = Number(text);
-  if (!Number.isInteger(n)) return { ok: false, error: `${label} must be a whole number.` };
-  if (n < 0) return { ok: false, error: `${label} cannot be negative.` };
-  if (n > 100000) return { ok: false, error: `${label} looks too large.` };
-
-  return { ok: true, value: n };
 }
 
 // ================================================================
@@ -1972,45 +1815,30 @@ function closeSellModal() {
   sellOrderData = null;
 }
 
-function closeRejectModal() {
-  const modal = $('rejectModal');
-  if (modal) modal.style.display = 'none';
-}
-
 async function confirmSell() {
-  if (!sellOrderData || !sellOrderData.id) return;
+  if (!sellOrderData) return;
 
-  const sellBtn = $('confirmSellBtn');
-  if (sellBtn && sellBtn.dataset.busy === '1') return;
-
-  const priceCheck = parseMoneyInput(getVal('sellSalePrice'), 'Sale price');
-  if (!priceCheck.ok || !(priceCheck.value > 0)) {
-    showToast(priceCheck.ok ? 'Valid sale price required' : priceCheck.error, 'error');
-    return;
-  }
-
-  const salePrice = priceCheck.value;
+  const salePrice = parseFloat(getVal('sellSalePrice'));
   const buyerName = getVal('sellBuyerName').trim();
   const buyerContact = getVal('sellBuyerContact').trim();
   const saleDate = getVal('sellSaleDate');
+
+  if (!salePrice || salePrice <= 0) {
+    showToast('Valid sale price required', 'error');
+    return;
+  }
 
   if (!buyerName) {
     showToast('Buyer name required', 'error');
     return;
   }
 
-  if (!saleDate) {
-    showToast('Sale date required', 'error');
-    return;
-  }
-
-  const purchasePrice = Number(sellOrderData.value) || 0;
+  const purchasePrice = sellOrderData.value || 0;
   const coinsQty = getCoins(sellOrderData);
   const coinsValue = getCoinTotalValue(sellOrderData);
   const actualCost = purchasePrice + coinsValue;
   const grossProfit = salePrice - actualCost;
-  const overhead = Number(overheadPerPhone) || 0;
-  const finalProfit = grossProfit - overhead;
+  const finalProfit = grossProfit - overheadPerPhone;
 
   const confirm = await Swal.fire({
     title: 'Confirm Sale',
@@ -2023,7 +1851,7 @@ async function confirmSell() {
         <p><strong>Actual Cost:</strong> ${formatINR(actualCost)}</p>
         <p><strong>Sale Price:</strong> ${formatINR(salePrice)}</p>
         <p><strong>Gross Profit:</strong> ${formatINR(grossProfit)}</p>
-        <p><strong>Overhead/Phone:</strong> ${formatINR(overhead)}</p>
+        <p><strong>Overhead/Phone:</strong> ${formatINR(overheadPerPhone)}</p>
         <p><strong>Final Net Profit:</strong> <span class="${finalProfit >= 0 ? 'text-green-600' : 'text-red-600'} font-bold">${formatINR(finalProfit)}</span></p>
         <p><strong>Buyer:</strong> ${buyerName}</p>
         <p><strong>Sale Date:</strong> ${saleDate}</p>
@@ -2039,65 +1867,20 @@ async function confirmSell() {
 
   if (!confirm.isConfirmed) return;
 
-  if (sellBtn) {
-    sellBtn.dataset.busy = '1';
-    sellBtn.disabled = true;
-    sellBtn.dataset.originalLabel = sellBtn.innerHTML;
-    sellBtn.textContent = 'Saving…';
-  }
-
   try {
-    const ref = db.ref('pickups/' + sellOrderData.id);
-    const saleTimestamp = new Date().toISOString();
-
-    // The write only lands if the phone is still unsold and in pickup status.
-    // Cost/profit are recomputed from the latest saved record so coins and
-    // purchase value are never taken from a stale modal.
-    const tx = await ref.transaction(current => {
-      if (!current) return;
-      if (current.sold === true) return;
-      if (current.status !== 'pickup') return;
-
-      const freshCost = getActualPurchaseCost(current);
-      const freshGross = salePrice - freshCost;
-      const freshFinal = freshGross - overhead;
-
-      current.sold = true;
-      current.salePrice = salePrice;
-      current.grossProfit = freshGross;
-      current.finalNetProfit = freshFinal;
-      current.profit = freshGross;
-      current.buyerName = buyerName;
-      current.buyerContact = buyerContact || '';
-      current.saleDate = saleDate;
-      current.saleTimestamp = saleTimestamp;
-      current.salesBy = (currentAdmin && (currentAdmin.username || currentAdmin.name)) || 'admin';
-
-      return current;
+    await db.ref('pickups/' + sellOrderData.id).update({
+      sold: true,
+      salePrice,
+      grossProfit,
+      finalNetProfit: finalProfit,
+      buyerName,
+      buyerContact: buyerContact || '',
+      saleDate,
+      saleTimestamp: new Date().toISOString()
     });
 
-    if (!tx.committed) {
-      const snap = tx.snapshot ? tx.snapshot.val() : null;
-      closeSellModal();
-
-      if (!snap) {
-        showToast('This order no longer exists. Refresh the list.', 'error');
-      } else if (snap.sold === true) {
-        showToast('Already sold — someone else completed this sale. Refresh the list.', 'error');
-      } else {
-        showToast(`Cannot sell an order in "${snap.status || 'unknown'}" status.`, 'error');
-      }
-
-      invalidate('pickups');
-      await Promise.allSettled([loadInventory(true), loadSales(true), loadDashboard(true)]);
-      return;
-    }
-
-    const saved = tx.snapshot ? tx.snapshot.val() : null;
-    const savedFinal = saved ? (Number(saved.finalNetProfit) || 0) : finalProfit;
-
     invalidate('pickups');
-    showToast(`✅ Sold! Final Net Profit: ${formatINR(savedFinal)}`, 'success');
+    showToast(`✅ Sold! Final Net Profit: ${formatINR(finalProfit)}`, 'success');
 
     closeSellModal();
 
@@ -2111,13 +1894,6 @@ async function confirmSell() {
   } catch (e) {
     console.error('Sale error:', e);
     showToast('Error saving sale', 'error');
-  } finally {
-    if (sellBtn) {
-      sellBtn.dataset.busy = '0';
-      sellBtn.disabled = false;
-      sellBtn.innerHTML = sellBtn.dataset.originalLabel || 'Confirm Sale';
-      refreshIcons();
-    }
   }
 }
 
@@ -2143,7 +1919,6 @@ async function viewOrder(orderId) {
   const detailEditBtn = $('detailEditBtn');
   const detailHoldBtn = $('detailHoldBtn');
   const detailUnholdBtn = $('detailUnholdBtn');
-  const detailRevertBtn = $('detailRevertBtn');
 
   if (detailActions) detailActions.style.display = 'flex';
   if (detailSaveActions) detailSaveActions.style.display = 'none';
@@ -2159,7 +1934,6 @@ async function viewOrder(orderId) {
   }
 
   if (detailUnholdBtn) detailUnholdBtn.style.display = 'none';
-  if (detailRevertBtn) detailRevertBtn.style.display = 'none';
 
   try {
     const snap = await db.ref('pickups/' + orderId).once('value');
@@ -2175,18 +1949,7 @@ async function viewOrder(orderId) {
 
     renderDetailView(item);
 
-    const isSold = item.sold === true;
-
-    if (detailRevertBtn && isSold) {
-      detailRevertBtn.style.display = 'inline-flex';
-      detailRevertBtn.onclick = revertSale;
-    }
-
-    if (isSold) {
-      // A sold phone cannot be held/unheld; it must be reverted first.
-      if (detailHoldBtn) detailHoldBtn.style.display = 'none';
-      if (detailUnholdBtn) detailUnholdBtn.style.display = 'none';
-    } else if (item.status === 'on_hold') {
+    if (item.status === 'on_hold') {
       if (detailHoldBtn) detailHoldBtn.style.display = 'none';
       if (detailUnholdBtn) {
         detailUnholdBtn.style.display = 'inline-flex';
@@ -2370,16 +2133,6 @@ async function holdOrderFromDetail() {
       return;
     }
 
-    if (order.sold === true) {
-      showToast('Sold orders cannot be put on hold. Revert the sale first.', 'error');
-      return;
-    }
-
-    if (order.status === 'on_hold') {
-      showToast('This order is already on hold', 'info');
-      return;
-    }
-
     await db.ref('pickups/' + detailOrderId).update({
       status: 'on_hold',
       hold_reason: reason,
@@ -2465,10 +2218,8 @@ async function revertSale() {
       buyerContact: null,
       saleDate: null,
       saleTimestamp: null,
-      profit: null,
       grossProfit: null,
-      finalNetProfit: null,
-      salesBy: null
+      finalNetProfit: null
     });
 
     invalidate('pickups');
@@ -2771,91 +2522,28 @@ async function saveEdit() {
     return;
   }
 
-  const saveBtn = $('saveEditBtn');
-  if (saveBtn && saveBtn.dataset.busy === '1') return;
-
   const orderId = getVal('edit-orderId').trim();
   const status = getVal('edit-status');
   const model = getVal('edit-model').trim();
-  const imeiRaw = getVal('edit-imei');
-  const imei2Raw = getVal('edit-imei2');
+  const imei = getVal('edit-imei').trim();
+  const imei2 = getVal('edit-imei2').trim();
+  const value = parseFloat(getVal('edit-value')) || 0;
+  const coins = parseInt(getVal('edit-coins')) || 0;
   const customer = getVal('edit-customer').trim();
   const reason = getVal('edit-reason').trim();
   const ramVal = getVal('edit-ram') || '';
   const storageVal = getVal('edit-storage') || '';
   const networkVal = getVal('edit-network') || '';
   const datetimeVal = getVal('edit-datetime');
+  const salePrice = parseFloat(getVal('edit-salePrice')) || 0;
   const buyer = getVal('edit-buyer').trim() || '';
   const buyerContact = getVal('edit-buyerContact').trim() || '';
+  const saleDate = getVal('edit-saleDate') || '';
 
   if (!orderId) {
     showToast('Order ID required', 'error');
     return;
   }
-
-  const allowedStatuses = ['pickup', 'rejected', 'reschedule', 'on_hold'];
-  if (!allowedStatuses.includes(status)) {
-    showToast('Invalid status selected', 'error');
-    return;
-  }
-
-  const isLiveInventory = status === 'pickup' && !editData.sold;
-
-  if (isLiveInventory && !model) {
-    showToast('Phone model is required for pickup orders', 'error');
-    return;
-  }
-
-  if (editData.sold && status !== 'pickup') {
-    showToast('Sold orders must stay in Pickup status. Revert the sale first.', 'error');
-    return;
-  }
-
-  const valueCheck = parseMoneyInput(getVal('edit-value'), 'Agreed value');
-  if (!valueCheck.ok) {
-    showToast(valueCheck.error, 'error');
-    return;
-  }
-
-  const coinsCheck = parseCoinsInput(getVal('edit-coins'), 'Coins');
-  if (!coinsCheck.ok) {
-    showToast(coinsCheck.error, 'error');
-    return;
-  }
-
-  const imeiCheck = normalizeImei(imeiRaw)
-    ? imeiSaveDecision(imeiRaw, editData.imei, 'IMEI')
-    : {
-        ok: !isLiveInventory,
-        changed: normalizeImei(editData.imei) !== '',
-        value: '',
-        warn: null,
-        error: 'IMEI is required for pickup orders'
-      };
-
-  if (!imeiCheck.ok) {
-    showToast(imeiCheck.error, 'error');
-    return;
-  }
-
-  let imei2Check = { ok: true, changed: false, value: '', warn: null };
-  if (normalizeImei(imei2Raw)) {
-    imei2Check = imeiSaveDecision(imei2Raw, editData.imei2, 'IMEI 2');
-    if (!imei2Check.ok) {
-      showToast(imei2Check.error, 'error');
-      return;
-    }
-  }
-
-  if (imeiCheck.value && imei2Check.value && imeiCheck.value === imei2Check.value) {
-    showToast('IMEI and IMEI 2 cannot be the same', 'error');
-    return;
-  }
-
-  const value = valueCheck.value;
-  const coins = coinsCheck.value;
-  const imei = imeiCheck.value;
-  const imei2 = imei2Check.value;
 
   const billNumberVal = getVal('edit-billNumber').trim();
   const aadhaarNumberVal = getVal('edit-aadhaarNumber').trim();
@@ -2864,119 +2552,84 @@ async function saveEdit() {
   const coinsValue = coins * coinRate;
   const actualCost = value + coinsValue;
 
-  const updated = {
+  let updated = {
     orderId,
     status,
-    phoneModel: model,
-    imei,
-    imei2,
-    value,
-    coins,
+    phoneModel: model || '',
+    imei: imei || '',
+    imei2: imei2 || '',
+    value: value || 0,
+    coins: coins,
     coinValueRate: coinRate,
     coinTotalValue: coinsValue,
     actualTotalCost: actualCost,
-    customerName: customer,
-    reason,
+    customerName: customer || '',
+    reason: reason || '',
     ram: ramVal,
     storage: storageVal,
     ramStorage: (ramVal && storageVal) ? (ramVal + '/' + storageVal) : (ramVal || storageVal || ''),
     networkType: networkVal,
     billNumber: billNumberVal,
-    aadhaarNumber: aadhaarNumberVal
+    aadhaarNumber: aadhaarNumberVal,
+    timestamp: editData.timestamp,
+    timestampIST: editData.timestampIST || ''
   };
 
   if (datetimeVal) {
     const d = new Date(datetimeVal);
 
-    if (isNaN(d.getTime())) {
-      showToast('Invalid date & time', 'error');
-      return;
+    if (!isNaN(d)) {
+      updated.timestamp = d.toISOString();
+
+      const istOffset = 5.5 * 60 * 60 * 1000;
+      const istTime = new Date(d.getTime() + istOffset);
+
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+      const dd = String(istTime.getUTCDate()).padStart(2, '0');
+      const mmm = months[istTime.getUTCMonth()];
+      const yyyy = istTime.getUTCFullYear();
+
+      let hours = istTime.getUTCHours();
+      const minutes = String(istTime.getUTCMinutes()).padStart(2, '0');
+      const seconds = String(istTime.getUTCSeconds()).padStart(2, '0');
+      const ampm = hours >= 12 ? 'PM' : 'AM';
+
+      hours = hours % 12 || 12;
+      const hh = String(hours).padStart(2, '0');
+
+      updated.timestampIST = `${dd}-${mmm}-${yyyy}, ${hh}:${minutes}:${seconds} ${ampm} IST`;
     }
-
-    updated.timestamp = d.toISOString();
-
-    const istOffset = 5.5 * 60 * 60 * 1000;
-    const istTime = new Date(d.getTime() + istOffset);
-
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-    const dd = String(istTime.getUTCDate()).padStart(2, '0');
-    const mmm = months[istTime.getUTCMonth()];
-    const yyyy = istTime.getUTCFullYear();
-
-    let hours = istTime.getUTCHours();
-    const minutes = String(istTime.getUTCMinutes()).padStart(2, '0');
-    const seconds = String(istTime.getUTCSeconds()).padStart(2, '0');
-    const ampm = hours >= 12 ? 'PM' : 'AM';
-
-    hours = hours % 12 || 12;
-    const hh = String(hours).padStart(2, '0');
-
-    updated.timestampIST = `${dd}-${mmm}-${yyyy}, ${hh}:${minutes}:${seconds} ${ampm} IST`;
-  } else if (editData.timestamp) {
-    updated.timestamp = editData.timestamp;
-    updated.timestampIST = editData.timestampIST || '';
   }
 
   if (editData.sold) {
-    const salePriceRaw = getVal('edit-salePrice').trim();
-    const salePriceCheck = parseMoneyInput(salePriceRaw, 'Sale price');
-
-    if (!salePriceCheck.ok) {
-      showToast(salePriceCheck.error, 'error');
-      return;
-    }
-
-    // Blank input means "keep the existing sale price", not "set it to zero".
-    const existingSalePrice = Number(editData.salePrice);
-    const salePrice = salePriceRaw
-      ? salePriceCheck.value
-      : (Number.isFinite(existingSalePrice) ? existingSalePrice : 0);
-
-    const saleDate = getVal('edit-saleDate') || editData.saleDate || '';
-    if (!saleDate) {
-      showToast('Sale date is required for sold orders', 'error');
-      return;
-    }
-
     const grossProfit = salePrice - actualCost;
-    const finalProfit = grossProfit - (Number(overheadPerPhone) || 0);
+    const finalProfit = grossProfit - overheadPerPhone;
 
     updated.sold = true;
-    updated.salePrice = salePrice;
-    updated.buyerName = buyer;
-    updated.buyerContact = buyerContact;
-    updated.saleDate = saleDate;
+    updated.salePrice = salePrice || 0;
+    updated.buyerName = buyer || '';
+    updated.buyerContact = buyerContact || '';
+    updated.saleDate = saleDate || '';
     updated.profit = grossProfit;
     updated.grossProfit = grossProfit;
     updated.finalNetProfit = finalProfit;
   }
 
   if (status === 'on_hold' && editData.status !== 'on_hold') {
-    updated.previous_status = editData.status || 'pickup';
+    updated.previous_status = editData.status;
     updated.hold_reason = reason || 'Manually held';
   } else if (status !== 'on_hold' && editData.status === 'on_hold') {
     updated.previous_status = null;
     updated.hold_reason = null;
   }
 
-  // Changing either IMEI must not introduce a duplicate in inventory / outside pickups.
-  const warnings = [];
-  if (imeiCheck.warn) warnings.push(imeiCheck.warn);
-  if (imei2Check.warn) warnings.push(imei2Check.warn);
-
-  if (imeiCheck.changed && imei) {
+  // Changing the IMEI must not introduce a duplicate in inventory / outside pickups.
+  const previousImei = String((editData && editData.imei) || '').trim();
+  if (imei && imei !== previousImei) {
     const duplicate = await findAdminImeiDuplicate(imei, detailOrderId);
     if (duplicate) {
       await showAdminDuplicateImeiWarning(imei, duplicate);
-      return;
-    }
-  }
-
-  if (imei2Check.changed && imei2) {
-    const duplicate = await findAdminImeiDuplicate(imei2, detailOrderId);
-    if (duplicate) {
-      await showAdminDuplicateImeiWarning(imei2, duplicate);
       return;
     }
   }
@@ -2993,47 +2646,16 @@ async function saveEdit() {
 
   if (!confirm.isConfirmed) return;
 
-  if (saveBtn) {
-    saveBtn.dataset.busy = '1';
-    saveBtn.disabled = true;
-    saveBtn.dataset.originalLabel = saveBtn.innerHTML;
-    saveBtn.textContent = 'Saving…';
-  }
-
   try {
-    // Abort if the order was sold or reverted while this edit was open. This
-    // prevents an old edit form from overwriting a newer sale state.
-    const ref = db.ref('pickups/' + detailOrderId);
-    const tx = await ref.transaction(current => {
-      if (!current) return;
-      if (Boolean(current.sold) !== Boolean(editData.sold)) return;
-      return Object.assign({}, current, updated);
-    });
-
-    if (!tx.committed) {
-      const current = tx.snapshot ? tx.snapshot.val() : null;
-
-      invalidate('pickups');
-
-      if (!current) {
-        showToast('This order no longer exists. Refresh the list.', 'error');
-      } else if (Boolean(current.sold) !== Boolean(editData.sold)) {
-        showToast('This order was sold or reverted while you were editing. Reopen it and try again.', 'error');
-      } else {
-        showToast('Could not save changes. Please try again.', 'error');
-      }
-
-      refreshOrderRelated();
-      return;
-    }
+    await db.ref('pickups/' + detailOrderId).update(updated);
 
     invalidate('pickups');
     showToast('✅ Updated', 'success');
-    warnings.forEach(warning => showToast(warning, 'warning', 6000));
 
     isEditMode = false;
 
-    const item = tx.snapshot ? tx.snapshot.val() : null;
+    const snap = await db.ref('pickups/' + detailOrderId).once('value');
+    const item = snap.val();
 
     if (item) {
       renderDetailView(item);
@@ -3059,14 +2681,6 @@ async function saveEdit() {
   } catch (e) {
     console.error(e);
     showToast('Error updating', 'error');
-  } finally {
-    if (saveBtn) {
-      saveBtn.dataset.busy = '0';
-      saveBtn.disabled = false;
-      if (saveBtn.dataset.originalLabel) {
-        saveBtn.innerHTML = saveBtn.dataset.originalLabel;
-      }
-    }
   }
 }
 
@@ -4436,7 +4050,7 @@ async function openOtpGeneratorModal(username) {
   const otpData = snap.val();
   const currentOtp = otpData ? otpData.otp : 'Not Generated';
 
-  const result = await Swal.fire({
+  const { value: action } = await Swal.fire({
     title: `OTP: ${username}`,
     html: `
       <div class="text-left text-sm space-y-2 py-2">
@@ -4456,18 +4070,14 @@ async function openOtpGeneratorModal(username) {
     denyButtonColor: '#059669'
   });
 
-  if (result.isConfirmed) {
+  if (action) {
     if (currentOtp && currentOtp !== 'Not Generated') {
-      try {
-        await navigator.clipboard.writeText(String(currentOtp));
-        showToast('OTP copied to clipboard!', 'success');
-      } catch (e) {
-        showToast(`OTP: ${currentOtp}`, 'info', 6000);
-      }
+      navigator.clipboard.writeText(currentOtp);
+      showToast('OTP copied to clipboard!', 'success');
     } else {
       showToast('Generate OTP first', 'info');
     }
-  } else if (result.isDenied) {
+  } else if (action === false) {
     await generateSingleAgentOtp(username, targetDate);
   }
 }
@@ -4987,25 +4597,6 @@ function getLastActivePayment(allPayments, agentUsername) {
   return list[0] || null;
 }
 
-// A partial payment must not close the cycle, otherwise its remainder is lost.
-// Legacy payments have no flag and behaved as closing payments, so only an
-// explicit `false` keeps a cycle open.
-function paymentClosesCycle(payment) {
-  return !payment || payment.closesCycle !== false;
-}
-
-function getLastClosingPayment(allPayments, agentUsername) {
-  return getActivePaymentsForAgent(allPayments, agentUsername)
-    .find(paymentClosesCycle) || null;
-}
-
-function getPaymentCycleEndDate(payment) {
-  if (!payment) return '';
-  const paymentDate = payment.paymentDate || '';
-  const cycleEnd = payment.cycleEndDate || '';
-  return cycleEnd > paymentDate ? cycleEnd : paymentDate;
-}
-
 function getPaymentHistoryForAgent(allPayments, agentUsername) {
   const agentPays = allPayments[agentUsername] || {};
   return Object.values(agentPays).sort((a, b) => {
@@ -5040,37 +4631,6 @@ function computeCycleRangeForAgent(mode, uData, lastActivePayment, selectedDate)
   return { start: today, end: today };
 }
 
-// ---------- Adjustment rules ----------
-// The type decides the sign for standard adjustments. "Other Adjustment" is
-// the only type where the admin can choose add / deduct / record-only.
-const ADJUSTMENT_TYPE_RULES = {
-  'Bonus': { effect: 'add', hint: 'Bonus always increases salary.' },
-  'Incentive': { effect: 'add', hint: 'Extra incentive always increases salary.' },
-  'Extra Incentive': { effect: 'add', hint: 'Extra incentive always increases salary.' },
-  'Extra Salary': { effect: 'add', hint: 'Extra salary always increases salary.' },
-  'Fuel/Travel Allowance': { effect: 'add', hint: 'Fuel / travel allowance always increases salary.' },
-  'Fuel / Travel Allowance': { effect: 'add', hint: 'Fuel / travel allowance always increases salary.' },
-  'Advance': { effect: 'deduct', hint: 'Salary advance is always deducted from salary.' },
-  'Penalty': { effect: 'deduct', hint: 'Penalty / cut is always deducted from salary.' },
-  'Other Adjustment': { effect: null, hint: 'Choose whether this other adjustment adds to, deducts from, or only records against salary.' }
-};
-
-function getAdjustmentRule(type) {
-  return ADJUSTMENT_TYPE_RULES[type] || { effect: null, hint: 'Choose the salary direction for this adjustment.' };
-}
-
-// New entries store their rule-mandated effect. Existing records keep their
-// already-saved effect so historical salary totals do not silently change.
-function resolveAdjustmentEffect(adj) {
-  const stored = adj && adj.effect;
-  if (stored === 'add' || stored === 'deduct' || stored === 'neutral') return stored;
-  return getAdjustmentRule(adj && adj.type).effect || 'neutral';
-}
-
-// Prevent double-clicks from writing the same salary mutation twice.
-let salaryPaymentSaveInFlight = false;
-let salaryAdjustmentSaveInFlight = false;
-
 // 🆕 Respects per-activity override via `getOverrideAmount(item)`.
 function computeCycleTotals({ uname, uData, cycleStart, cycleEnd, allAttendance, pickupsByAgentDate, allAdjustments }) {
   const salary = uData.salary || 0;
@@ -5085,8 +4645,6 @@ function computeCycleTotals({ uname, uData, cycleStart, cycleEnd, allAttendance,
   let totalRejectIncentive = 0;
   let totalBonus = 0;
   let totalDeduction = 0;
-  let previousBalanceBonus = 0;
-  let previousBalanceDeduction = 0;
 
   let presentDays = 0;
   let halfDays = 0;
@@ -5173,18 +4731,8 @@ function computeCycleTotals({ uname, uData, cycleStart, cycleEnd, allAttendance,
     if (adj.settledInCycle) continue;
 
     const amt = Number(adj.amount) || 0;
-    if (!amt) continue;
-
-    const effect = resolveAdjustmentEffect(adj);
-    const isPreviousBalance = adj.adjustTarget === 'previous_balance';
-
-    if (effect === 'add') {
-      totalBonus += amt;
-      if (isPreviousBalance) previousBalanceBonus += amt;
-    } else if (effect === 'deduct') {
-      totalDeduction += amt;
-      if (isPreviousBalance) previousBalanceDeduction += amt;
-    }
+    if (adj.effect === 'add') totalBonus += amt;
+    else if (adj.effect === 'deduct') totalDeduction += amt;
 
     usedAdjustmentIds.push(adj.id);
   }
@@ -5201,8 +4749,6 @@ function computeCycleTotals({ uname, uData, cycleStart, cycleEnd, allAttendance,
     totalBaseSalary,
     totalBonus,
     totalDeduction,
-    previousBalanceBonus,
-    previousBalanceDeduction,
     grandTotal,
     totalPickupIncentive,
     totalRejectIncentive,
@@ -5253,7 +4799,7 @@ function buildSalaryCard({
         </div>
         <div class="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
           ${statusBadge}
-          <span class="text-[9px] sm:text-[10px] text-gray-400">${paidCyclesCount} payment${paidCyclesCount === 1 ? '' : 's'}</span>
+          <span class="text-[9px] sm:text-[10px] text-gray-400">${paidCyclesCount} paid</span>
         </div>
       </div>
 
@@ -5281,14 +4827,6 @@ function buildSalaryCard({
           <div class="text-base sm:text-lg font-black text-emerald-800 mt-0.5 sm:mt-1">${formatINR(t.grandTotal)}</div>
         </div>
       </div>
-
-      ${(t.previousBalanceBonus || t.previousBalanceDeduction) ? `
-        <div class="mb-2 sm:mb-3 text-[10px] sm:text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5">
-          Previous balance included:
-          ${t.previousBalanceBonus ? `<strong class="text-blue-600">+${formatINR(t.previousBalanceBonus)}</strong>` : ''}
-          ${t.previousBalanceDeduction ? `<strong class="text-rose-600">-${formatINR(t.previousBalanceDeduction)}</strong>` : ''}
-        </div>
-      ` : ''}
 
       <div class="mb-2 sm:mb-3 p-2 sm:p-3 rounded-lg sm:rounded-xl bg-amber-50 border border-dashed border-amber-300">
         <div class="flex items-center gap-1 sm:gap-2 mb-1.5 sm:mb-2 flex-wrap">
@@ -5415,10 +4953,10 @@ async function loadSalaryData(force = false) {
     const selectedDate = mode === 'date' ? (getVal('salaryDate') || getLocalYMD()) : null;
 
     for (const [uname, uData] of Object.entries(agents)) {
-      const lastClosingPayment = getLastClosingPayment(allPayments, uname);
-      const lastPaidDate = lastClosingPayment ? lastClosingPayment.paymentDate : null;
+      const lastActivePayment = getLastActivePayment(allPayments, uname);
+      const lastPaidDate = lastActivePayment ? lastActivePayment.paymentDate : null;
 
-      const { start: cycleStart, end: cycleEnd } = computeCycleRangeForAgent(mode, uData, lastClosingPayment, selectedDate);
+      const { start: cycleStart, end: cycleEnd } = computeCycleRangeForAgent(mode, uData, lastActivePayment, selectedDate);
 
       const totals = computeCycleTotals({
         uname, uData,
@@ -5533,14 +5071,12 @@ async function openPaidModal(agentUsername) {
       if (da !== dbb) return dbb.localeCompare(da);
       return (b.createdAt || 0) - (a.createdAt || 0);
     });
-  const lastClosingPayment = activePayments.find(paymentClosesCycle) || null;
-  const lastPaidDate = lastClosingPayment ? lastClosingPayment.paymentDate : null;
+  const lastActivePayment = activePayments[0] || null;
+  const lastPaidDate = lastActivePayment ? lastActivePayment.paymentDate : null;
 
   const today = getLocalYMD();
   const joinDateStr = uData.joinDate || null;
-  const cycleStart = lastClosingPayment
-    ? addDays(getPaymentCycleEndDate(lastClosingPayment), 1)
-    : (joinDateStr || '2020-01-01');
+  const cycleStart = lastPaidDate ? addDays(lastPaidDate, 1) : (joinDateStr || '2020-01-01');
   const cycleEnd = today;
 
   const [pickups, allAttendance, allAdjustmentsSnap] = await Promise.all([
@@ -5572,16 +5108,6 @@ async function openPaidModal(agentUsername) {
     .reduce((s, p) => s + (Number(p.amount) || 0), 0);
   const pending = Math.max(0, totals.grandTotal - alreadyPaid);
 
-  if (pending <= 0) {
-    await Swal.fire({
-      icon: 'info',
-      title: 'Cycle Already Settled',
-      text: 'There is no pending amount for this cycle. If an adjustment was missed, add it first and then record the payment.',
-      confirmButtonColor: '#4f46e5'
-    });
-    return;
-  }
-
   const step1 = await Swal.fire({
     title: '💰 Mark Salary as Paid?',
     html: `
@@ -5597,7 +5123,7 @@ async function openPaidModal(agentUsername) {
           ${alreadyPaid > 0 ? `<div class="flex justify-between text-xs mt-1 text-gray-600"><span>Already Paid:</span><strong>${formatINR(alreadyPaid)}</strong></div>` : ''}
           <div class="flex justify-between text-sm mt-2 pt-2 border-t border-gray-200"><span class="font-bold">Pending:</span><strong class="text-rose-600">${formatINR(pending)}</strong></div>
         </div>
-        <p class="text-[11px] text-gray-500 font-semibold mt-2">✔️ Full payment closes the cycle & starts a new one automatically. A partial amount keeps this cycle open and carries the remainder forward.</p>
+        <p class="text-[11px] text-gray-500 font-semibold mt-2">✔️ Mark as Paid → cycle will close & a new fresh cycle starts automatically.</p>
         <p class="text-[11px] text-gray-400">Pickup/Reject incentives are excluded from Grand Total. Can be undone anytime.</p>
       </div>
     `,
@@ -5618,7 +5144,7 @@ async function openPaidModal(agentUsername) {
         <p class="text-gray-500 text-xs">Enter the amount you are paying now:</p>
         <div>
           <label class="block font-semibold text-gray-700 mb-1 text-xs">Amount (₹)</label>
-          <input type="number" id="paid_amount" class="swal2-input" placeholder="Enter amount" min="1" step="0.01" value="${pending}">
+          <input type="number" id="paid_amount" class="swal2-input" placeholder="Enter amount" min="1" value="${pending || totals.grandTotal}">
         </div>
         <div>
           <label class="block font-semibold text-gray-700 mb-1 text-xs">Payment Date</label>
@@ -5628,7 +5154,7 @@ async function openPaidModal(agentUsername) {
           <label class="block font-semibold text-gray-700 mb-1 text-xs">Note (optional)</label>
           <input type="text" id="paid_note" class="swal2-input" placeholder="e.g. UPI transfer">
         </div>
-        <p class="text-[11px] text-gray-400">ℹ️ Full ${formatINR(pending)} closes the cycle. A smaller amount is saved as a partial payment and the balance stays pending.</p>
+        <p class="text-[11px] text-gray-400">ℹ️ After payment, a new cycle will start the next day.</p>
       </div>
     `,
     showCancelButton: true,
@@ -5641,7 +5167,6 @@ async function openPaidModal(agentUsername) {
       const dt = document.getElementById('paid_date').value;
       const note = document.getElementById('paid_note').value.trim();
       if (!amt || amt <= 0) { Swal.showValidationMessage('Enter a valid amount'); return false; }
-      if (amt > pending + 0.5) { Swal.showValidationMessage(`Amount cannot exceed the pending ${formatINR(pending)}. Record extra money as an adjustment.`); return false; }
       if (!dt) { Swal.showValidationMessage('Select payment date'); return false; }
       return { amt, dt, note };
     }
@@ -5649,14 +5174,6 @@ async function openPaidModal(agentUsername) {
 
   if (!step2.isConfirmed) return;
   const { amt, dt, note } = step2.value;
-
-  if (salaryPaymentSaveInFlight) {
-    showToast('A payment is already being saved. Please wait.', 'info');
-    return;
-  }
-  salaryPaymentSaveInFlight = true;
-
-  const closesCycle = Number(amt) >= pending - 0.5;
 
   try {
     const payId = 'pay_' + Date.now();
@@ -5682,8 +5199,6 @@ async function openPaidModal(agentUsername) {
       cycleHalfDays: totals.halfDays,
       cycleAbsentDays: totals.absentDays,
       cycleAdjustmentIds: totals.usedAdjustmentIds || [],
-      pendingBeforePayment: pending,
-      closesCycle,
 
       status: 'PAID',
       createdAt: Date.now(),
@@ -5692,9 +5207,7 @@ async function openPaidModal(agentUsername) {
 
     await db.ref('salary_payments/' + agentUsername + '/' + payId).set(entry);
 
-    // Adjustments stay pending until the cycle is fully settled. Settling them
-    // on a partial payment would make their balance disappear from the next cycle.
-    if (closesCycle && totals.usedAdjustmentIds && totals.usedAdjustmentIds.length) {
+    if (totals.usedAdjustmentIds && totals.usedAdjustmentIds.length) {
       const adjUpdates = {};
       for (const adjId of totals.usedAdjustmentIds) {
         adjUpdates[`adjustments/${agentUsername}/${adjId}/settledInCycle`] = payId;
@@ -5705,19 +5218,13 @@ async function openPaidModal(agentUsername) {
 
     invalidate('salary_payments');
     showToast(`✅ Payment of ${formatINR(amt)} recorded`, 'success');
-    if (closesCycle) {
-      showToast(`🔄 Cycle closed. New cycle starts from ${addDays(dt, 1)}`, 'info', 4500);
-    } else {
-      showToast(`⏳ Partial payment saved. ${formatINR(Math.max(0, pending - amt))} still pending in this cycle.`, 'info', 5000);
-    }
+    showToast(`🔄 Cycle closed. New cycle starts from ${addDays(dt, 1)}`, 'info', 4500);
 
     loadSalaryData(true);
     loadDashboard(true);
   } catch (e) {
     console.error(e);
     showToast('Failed to save payment', 'error');
-  } finally {
-    salaryPaymentSaveInFlight = false;
   }
 }
 
@@ -5819,7 +5326,7 @@ async function redoPaidCycle(agentUsername, payId) {
       redoneAt: Date.now()
     });
 
-    if (paymentClosesCycle(entry) && Array.isArray(entry.cycleAdjustmentIds) && entry.cycleAdjustmentIds.length) {
+    if (Array.isArray(entry.cycleAdjustmentIds) && entry.cycleAdjustmentIds.length) {
       const adjUpdates = {};
       for (const adjId of entry.cycleAdjustmentIds) {
         adjUpdates[`adjustments/${agentUsername}/${adjId}/settledInCycle`] = payId;
@@ -5927,12 +5434,9 @@ async function openPaymentHistoryModal(agentUsername) {
     } else {
       rows = list.map((p, i) => {
         const isUndone = p.status === 'UNDONE';
-        const isPartial = !isUndone && p.closesCycle === false;
         const statusBadge = isUndone
           ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-200 text-gray-700">↩️ UNDONE</span>'
-          : isPartial
-            ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">⏳ PARTIAL</span>'
-            : '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">✅ PAID</span>';
+          : '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">✅ PAID</span>';
 
         const cycle = p.cycleStartDate === p.cycleEndDate
           ? (p.cycleStartDate || '—')
@@ -5970,7 +5474,7 @@ async function openPaymentHistoryModal(agentUsername) {
       html: `
         <div class="text-left py-2 font-sans">
           <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
-            <span class="text-xs text-gray-500">Active payments: <strong>${activeList.length}</strong> · Total records: <strong>${list.length}</strong></span>
+            <span class="text-xs text-gray-500">Active cycles: <strong>${activeList.length}</strong> · Total cycles: <strong>${list.length}</strong></span>
             <span class="text-xs text-gray-500">Total paid: <strong class="text-emerald-600">${formatINR(totalPaid)}</strong></span>
           </div>
           <div class="max-h-[460px] overflow-y-auto border border-gray-200 rounded-xl">
@@ -6036,12 +5540,9 @@ async function openAllPaymentsHistoryModal() {
     } else {
       rows = list.map((p, i) => {
         const isUndone = p.status === 'UNDONE';
-        const isPartial = !isUndone && p.closesCycle === false;
         const statusBadge = isUndone
           ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-200 text-gray-700">↩️ UNDONE</span>'
-          : isPartial
-            ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">⏳ PARTIAL</span>'
-            : '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">✅ PAID</span>';
+          : '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">✅ PAID</span>';
 
         const cycle = p.cycleStartDate === p.cycleEndDate
           ? (p.cycleStartDate || '—')
@@ -6081,7 +5582,7 @@ async function openAllPaymentsHistoryModal() {
       html: `
         <div class="text-left py-2 font-sans">
           <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
-            <span class="text-xs text-gray-500">Active payments: <strong>${activeList.length}</strong> · Total records: <strong>${list.length}</strong></span>
+            <span class="text-xs text-gray-500">Active cycles: <strong>${activeList.length}</strong> · Total cycles: <strong>${list.length}</strong></span>
             <span class="text-xs text-gray-500">Total paid: <strong class="text-emerald-600">${formatINR(totalPaid)}</strong></span>
           </div>
           <div class="max-h-[500px] overflow-y-auto border border-gray-200 rounded-xl">
@@ -6117,30 +5618,6 @@ async function openAllPaymentsHistoryModal() {
 // ================================================================
 let currentAdjustmentAgent = null;
 
-function syncAdjustmentFormRules() {
-  const typeEl = $('adj_type');
-  const effectEl = $('adj_is_deduction');
-  const hintEl = $('adj_effect_hint');
-  const periodEl = $('adj_adjust_target');
-  const periodHintEl = $('adj_period_hint');
-  if (!typeEl || !effectEl) return;
-
-  const rule = getAdjustmentRule(typeEl.value);
-  if (rule.effect) {
-    effectEl.value = rule.effect;
-    effectEl.disabled = true;
-  } else {
-    effectEl.disabled = false;
-  }
-
-  if (hintEl) hintEl.textContent = rule.hint;
-  if (periodEl && periodHintEl) {
-    periodHintEl.textContent = periodEl.value === 'previous_balance'
-      ? 'Previous balance is included in this cycle and shown separately on the salary card.'
-      : 'Applies to the current unpaid cycle.';
-  }
-}
-
 async function openAddAdjustmentModal(defaultAgent = '') {
   const users = await getData('users', false);
   const activeAgents = getActiveAgents(users);
@@ -6167,14 +5644,14 @@ async function openAddAdjustmentModal(defaultAgent = '') {
           </div>
           <div>
             <label class="block font-semibold text-gray-700 mb-1">Type</label>
-            <select id="adj_type" onchange="syncAdjustmentFormRules()" class="w-full p-2 border border-gray-300 rounded-lg text-sm bg-white">
+            <select id="adj_type" class="w-full p-2 border border-gray-300 rounded-lg text-sm bg-white">
               <option value="Bonus">🎁 Bonus (Add)</option>
               <option value="Incentive">⭐ Extra Incentive (Add)</option>
               <option value="Extra Salary">💵 Extra Salary (Add)</option>
               <option value="Advance">💸 Salary Advance (Deduct)</option>
               <option value="Penalty">⚠️ Penalty / Cut (Deduct)</option>
               <option value="Fuel/Travel Allowance">⛽ Fuel / Travel Allowance (Add)</option>
-              <option value="Other Adjustment">📝 Other Adjustment (Choose Direction)</option>
+              <option value="Other Adjustment">📝 Other Adjustment</option>
             </select>
           </div>
         </div>
@@ -6196,7 +5673,7 @@ async function openAddAdjustmentModal(defaultAgent = '') {
         <div class="p-3 bg-gray-50 border border-gray-200 rounded-xl space-y-2">
           <div class="font-semibold text-gray-800 text-[11px] uppercase tracking-wide">Adjustment Rules</div>
 
-          <div class="flex items-center justify-between gap-2">
+          <div class="flex items-center justify-between">
             <span class="text-gray-700 font-medium">Salary Effect:</span>
             <select id="adj_is_deduction" class="p-1 border border-gray-300 rounded text-xs bg-white">
               <option value="add">➕ Add to Salary (Earnings)</option>
@@ -6204,17 +5681,22 @@ async function openAddAdjustmentModal(defaultAgent = '') {
               <option value="neutral">Neutral (Record only)</option>
             </select>
           </div>
-          <p id="adj_effect_hint" class="text-[10px] text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg px-2 py-1 leading-snug"></p>
 
-          <div class="flex items-center justify-between gap-2">
+          <div class="flex items-center justify-between">
+            <span class="text-gray-700 font-medium">Deduct from Pickup/Reject Incentives?</span>
+            <select id="adj_deduct_incentives" class="p-1 border border-gray-300 rounded text-xs bg-white">
+              <option value="no">No (Base salary only)</option>
+              <option value="yes">Yes (Can cut from incentives)</option>
+            </select>
+          </div>
+
+          <div class="flex items-center justify-between">
             <span class="text-gray-700 font-medium">Adjustment Period:</span>
-            <select id="adj_adjust_target" onchange="syncAdjustmentFormRules()" class="p-1 border border-gray-300 rounded text-xs bg-white">
+            <select id="adj_adjust_target" class="p-1 border border-gray-300 rounded text-xs bg-white">
               <option value="current">Current Month Salary</option>
               <option value="previous_balance">Previous Balance / Carry Forward</option>
             </select>
           </div>
-          <p id="adj_period_hint" class="text-[10px] text-gray-500 leading-snug"></p>
-          <p class="text-[10px] text-gray-400 leading-snug">ℹ️ Pickup / reject incentives are paid separately and are not changed by this adjustment.</p>
         </div>
 
         <div>
@@ -6223,9 +5705,6 @@ async function openAddAdjustmentModal(defaultAgent = '') {
         </div>
       </div>
     `,
-    didOpen: () => {
-      syncAdjustmentFormRules();
-    },
     showCancelButton: true,
     confirmButtonText: '💾 Save Adjustment',
     confirmButtonColor: '#4f46e5',
@@ -6236,53 +5715,23 @@ async function openAddAdjustmentModal(defaultAgent = '') {
       const type = document.getElementById('adj_type').value;
       const date = document.getElementById('adj_date').value;
       const time = document.getElementById('adj_time').value;
-      const selectedEffect = document.getElementById('adj_is_deduction').value;
+      const effect = document.getElementById('adj_is_deduction').value;
+      const deductIncentives = document.getElementById('adj_deduct_incentives').value;
       const adjustTarget = document.getElementById('adj_adjust_target').value;
       const reason = document.getElementById('adj_reason').value.trim();
-      const rule = getAdjustmentRule(type);
-      const effect = rule.effect || selectedEffect;
 
       if (!agent) { Swal.showValidationMessage('Select an agent'); return false; }
-      if (!Number.isFinite(amount) || amount <= 0) { Swal.showValidationMessage('Enter a valid amount greater than 0'); return false; }
+      if (!amount || amount <= 0) { Swal.showValidationMessage('Enter a valid amount'); return false; }
       if (!date) { Swal.showValidationMessage('Select a date'); return false; }
-      if (!['add', 'deduct', 'neutral'].includes(effect)) { Swal.showValidationMessage('Select a valid salary effect'); return false; }
-      if (rule.effect && selectedEffect !== rule.effect) {
-        Swal.showValidationMessage(`${type} can only ${rule.effect === 'add' ? 'add to' : 'deduct from'} salary`);
-        return false;
-      }
 
-      return { agent, amount, type, date, time, effect, adjustTarget, reason };
+      return { agent, amount, type, date, time, effect, deductIncentives, adjustTarget, reason };
     }
   });
 
   if (!formValues) return;
 
-  if (salaryAdjustmentSaveInFlight) {
-    showToast('An adjustment is already being saved. Please wait.', 'info');
-    return;
-  }
-  salaryAdjustmentSaveInFlight = true;
-
   try {
-    const now = Date.now();
-
-    // Guard against a rapid re-open + re-submit of the exact same entry.
-    const existingSnap = await db.ref('adjustments/' + formValues.agent).once('value');
-    const existing = existingSnap.val() || {};
-    const duplicate = Object.values(existing).find(a =>
-      a && a.status !== 'REVERTED' &&
-      Math.abs((Number(a.createdAt) || 0) - now) < 15000 &&
-      a.type === formValues.type &&
-      Number(a.amount) === Number(formValues.amount) &&
-      a.date === formValues.date &&
-      (a.time || '12:00') === (formValues.time || '12:00')
-    );
-    if (duplicate) {
-      showToast('The same adjustment was just saved. Duplicate blocked.', 'error');
-      return;
-    }
-
-    const adjId = 'adj_' + now + '_' + Math.random().toString(36).slice(2, 7);
+    const adjId = 'adj_' + Date.now();
     const entry = {
       id: adjId,
       agent: formValues.agent,
@@ -6290,13 +5739,13 @@ async function openAddAdjustmentModal(defaultAgent = '') {
       type: formValues.type,
       date: formValues.date,
       time: formValues.time || '12:00',
-      timestamp: new Date(`${formValues.date}T${formValues.time || '12:00'}`).getTime() || now,
+      timestamp: new Date(`${formValues.date}T${formValues.time || '12:00'}`).getTime() || Date.now(),
       effect: formValues.effect,
-      deductIncentives: false,
+      deductIncentives: formValues.deductIncentives === 'yes',
       adjustTarget: formValues.adjustTarget,
       reason: formValues.reason || 'None',
 
-      createdAt: now,
+      createdAt: Date.now(),
       createdBy: 'admin',
       createdByName: 'Admin',
       status: 'ACTIVE',
@@ -6311,8 +5760,6 @@ async function openAddAdjustmentModal(defaultAgent = '') {
   } catch (e) {
     console.error('Error saving adjustment:', e);
     showToast('Failed to save adjustment', 'error');
-  } finally {
-    salaryAdjustmentSaveInFlight = false;
   }
 }
 
@@ -7111,7 +6558,7 @@ function injectSalaryHeaderButtons() {
 // ================================================================
 // INIT
 // ================================================================
-function bootApp() {
+document.addEventListener('DOMContentLoaded', () => {
   refreshIcons();
   loadDashboard(true);
 
@@ -7159,81 +6606,6 @@ function bootApp() {
   }, 300000);
 
   showToast('👋 Welcome', 'info', 2000);
-}
-
-async function initAuthGate() {
-  const gate = $('authGate');
-  if (!gate) {
-    document.body.classList.add('locked');
-    console.error('Admin auth gate is missing; dashboard startup has been blocked.');
-    return;
-  }
-
-  const existing = readAdminSession();
-  if (existing) {
-    currentAdmin = existing;
-    gate.remove();
-    document.body.classList.remove('locked');
-    renderSessionBar();
-    bootApp();
-    return;
-  }
-
-  document.body.classList.add('locked');
-
-  const form = $('authForm');
-  const userInput = $('authUsername');
-  const passInput = $('authPassword');
-  const errorEl = $('authError');
-  const submitBtn = $('authSubmit');
-
-  if (!form || !userInput || !passInput || !errorEl || !submitBtn) {
-    errorEl && (errorEl.textContent = 'Sign-in is unavailable. Please reload or contact the administrator.');
-    errorEl && errorEl.classList.add('show');
-    console.error('Admin auth form is incomplete; dashboard startup has been blocked.');
-    return;
-  }
-
-  userInput.focus();
-
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    if (submitBtn.disabled) return;
-
-    errorEl.textContent = '';
-    errorEl.classList.remove('show');
-    submitBtn.disabled = true;
-    submitBtn.dataset.label = submitBtn.textContent;
-    submitBtn.textContent = 'Signing in…';
-
-    try {
-      const session = await attemptAdminLogin(userInput.value, passInput.value);
-      writeAdminSession(session);
-      currentAdmin = session;
-
-      gate.remove();
-      document.body.classList.remove('locked');
-      renderSessionBar();
-      bootApp();
-      showToast('Signed in as ' + (session.name || session.username), 'success', 2500);
-    } catch (error) {
-      const message = String((error && error.message) || 'Sign in failed.');
-      errorEl.textContent = /permission|denied/i.test(message)
-        ? 'Sign-in was blocked by the database. Ask the owner to check the rules.'
-        : message;
-      errorEl.classList.add('show');
-      passInput.value = '';
-      passInput.focus();
-    } finally {
-      submitBtn.disabled = false;
-      submitBtn.textContent = submitBtn.dataset.label || 'Sign in';
-    }
-  });
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-  refreshIcons();
-  initAuthGate();
 });
 
 // ================================================================
@@ -8580,7 +7952,7 @@ async function viewOutsidePickup(pickupId) {
 // IMEI is the only duplicate key. Rejected outside pickups are excluded so a
 // rejected phone can be re-entered, and the record being edited is excluded.
 async function findAdminImeiDuplicate(imei, excludePickupId) {
-  const target = normalizeImei(imei);
+  const target = String(imei || '').trim();
   if (!target) return null;
 
   try {
@@ -8588,13 +7960,13 @@ async function findAdminImeiDuplicate(imei, excludePickupId) {
     const all = snap.val() || {};
     for (const [id, rec] of Object.entries(all)) {
       if (!rec) continue;
-      if (excludePickupId && (id === excludePickupId || rec.orderId === excludePickupId)) continue;
-      if (rec.status !== 'pickup' && rec.status !== 'on_hold') continue;
-      if (normalizeImei(rec.imei) !== target && normalizeImei(rec.imei2) !== target) continue;
+      if (excludePickupId && id === excludePickupId) continue;
+      if ((rec.status || '') !== 'pickup') continue;
+      if (String(rec.imei || '').trim() !== target) continue;
       return {
         pickupId: id,
         phoneModel: rec.phoneModel || '',
-        status: rec.status === 'on_hold' ? 'On hold' : (rec.sold === true ? 'Sold' : 'Pickup Completed'),
+        status: 'Pickup Completed',
         rider: rec.rider || rec.agent || '',
         date: rec.date || rec.timestampIST || ''
       };
@@ -8606,9 +7978,9 @@ async function findAdminImeiDuplicate(imei, excludePickupId) {
     const all = snap.val() || {};
     for (const [id, rec] of Object.entries(all)) {
       if (!rec) continue;
-      if (excludePickupId && (id === excludePickupId || rec.pickupId === excludePickupId)) continue;
+      if (excludePickupId && id === excludePickupId) continue;
       if ((rec.status || 'pending') === 'rejected') continue;
-      if (normalizeImei(rec.imei) !== target && normalizeImei(rec.imei2) !== target) continue;
+      if (String(rec.imei || '').trim() !== target) continue;
       return {
         pickupId: id,
         phoneModel: rec.phoneModel || '',
@@ -8670,7 +8042,7 @@ async function approveOutsidePickup(pickupId) {
       showToast('Pickup has an invalid value and cannot be approved', 'error');
       return;
     }
-    const imei = normalizeImei(item.imei);
+    const imei = String(item.imei || '').trim();
     approvalImei = imei;
     const [inventorySnap, existingRecordSnap] = await Promise.all([
       db.ref('pickups').once('value'),
@@ -8683,8 +8055,7 @@ async function approveOutsidePickup(pickupId) {
 
     const inventory = inventorySnap.val() || {};
     const duplicate = imei && Object.entries(inventory).some(([id, record]) =>
-      id !== pickupId && record && record.status === 'pickup' &&
-      (normalizeImei(record.imei) === imei || normalizeImei(record.imei2) === imei)
+      id !== pickupId && record && record.status === 'pickup' && String(record.imei || '').trim() === imei
     );
     if (duplicate) {
       await Swal.fire({
@@ -8754,8 +8125,7 @@ async function approveOutsidePickup(pickupId) {
       const invSnap = await db.ref('pickups').once('value');
       const inv = invSnap.val() || {};
       const dupNow = imei && Object.entries(inv).some(([id, rec]) =>
-        id !== pickupId && rec && rec.status === 'pickup' &&
-        (normalizeImei(rec.imei) === imei || normalizeImei(rec.imei2) === imei)
+        id !== pickupId && rec && rec.status === 'pickup' && String(rec.imei || '').trim() === imei
       );
       if (dupNow) {
         if (claimHeld) db.ref('cashify_inventory_imei_claims/' + imei).remove().catch(() => {});
