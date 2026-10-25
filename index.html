@@ -808,9 +808,67 @@
 
             h2.text-2xl { font-size: 1.1rem !important; }
         }
+
+        /* ===== ADMIN AUTH GATE ===== */
+        .auth-gate {
+            position: fixed;
+            inset: 0;
+            z-index: 200;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            background: #0f172a;
+            background-image: radial-gradient(1100px 520px at 50% -10%, rgba(18, 202, 167, .26), transparent 62%);
+        }
+        .auth-card {
+            width: 100%;
+            max-width: 380px;
+            background: #fff;
+            border-radius: 18px;
+            padding: 28px 26px 24px;
+            box-shadow: 0 24px 60px -12px rgba(15, 23, 42, .45);
+        }
+        .auth-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
+        .auth-mark {
+            width: 42px; height: 42px; border-radius: 12px;
+            background: linear-gradient(135deg, #12CAA7, #0FA88B);
+            color: #fff; display: flex; align-items: center; justify-content: center;
+            font-weight: 800; font-size: 17px; letter-spacing: -0.5px;
+            box-shadow: 0 6px 16px -4px rgba(18, 202, 167, .55);
+        }
+        .auth-brand h2 { font-size: 15px; font-weight: 700; color: #0f172a; margin: 0; letter-spacing: -0.2px; }
+        .auth-brand p { font-size: 11.5px; color: #94a3b8; margin: 2px 0 0; font-weight: 500; }
+        .auth-field { margin-bottom: 14px; }
+        .auth-field label {
+            display: block; font-size: 11px; font-weight: 700; letter-spacing: .4px;
+            text-transform: uppercase; color: #64748b; margin-bottom: 6px;
+        }
+        .auth-field input {
+            width: 100%; padding: 11px 13px; border: 1px solid #e2e8f0; border-radius: 10px;
+            font-size: 14px; color: #0f172a; outline: none; background: #fff;
+            transition: border-color .15s, box-shadow .15s;
+        }
+        .auth-field input:focus { border-color: #12CAA7; box-shadow: 0 0 0 3px rgba(18, 202, 167, .14); }
+        .auth-error {
+            display: none; margin: 0 0 12px; padding: 9px 12px;
+            background: #fef2f2; border: 1px solid #fecaca; border-radius: 9px;
+            color: #b91c1c; font-size: 12.5px; font-weight: 500;
+        }
+        .auth-error.show { display: block; }
+        .auth-submit {
+            width: 100%; padding: 11px; border: none; border-radius: 10px;
+            background: linear-gradient(135deg, #12CAA7, #0FA88B); color: #fff;
+            font-size: 14px; font-weight: 600; cursor: pointer;
+            transition: opacity .15s;
+        }
+        .auth-submit:hover:not(:disabled) { opacity: 0.9; }
+        .auth-submit:disabled { opacity: .6; cursor: not-allowed; }
+        .auth-foot { margin: 16px 0 0; text-align: center; font-size: 11px; color: #94a3b8; }
+        body.locked { overflow: hidden; }
     </style>
 </head>
-<body>
+<body class="locked">
 
 <!-- ================================================================ -->
 <!-- SECTION 2: TOAST NOTIFICATION                                    -->
@@ -882,13 +940,17 @@
 
         <div class="mt-auto pt-6 border-t border-gray-100 px-3">
             <div class="flex items-center gap-3">
-                <div class="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center">
+                <div class="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center flex-shrink-0">
                     <i data-lucide="user" class="w-4 h-4 text-gray-600"></i>
                 </div>
-                <div>
-                    <p class="text-xs font-bold text-gray-800">Admin</p>
-                    <p class="text-[10px] text-gray-400">Supervisor</p>
+                <div class="min-w-0 flex-1">
+                    <p class="text-xs font-bold text-gray-800 truncate" id="sidebarAdminName">Admin</p>
+                    <p class="text-[10px] text-gray-400 truncate" id="sidebarAdminRole">Supervisor</p>
                 </div>
+                <button id="signOutBtn" onclick="signOutAdmin()" title="Sign out" aria-label="Sign out"
+                    class="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition flex-shrink-0">
+                    <i data-lucide="log-out" class="w-4 h-4"></i>
+                </button>
             </div>
             <button onclick="refreshAll()" class="mt-3 w-full text-xs font-medium text-gray-500 hover:text-gray-800 flex items-center justify-center gap-1.5 py-2 rounded-lg hover:bg-gray-50 transition">
                 <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Refresh
@@ -1790,7 +1852,7 @@
               </div>
               <div class="sticky bottom-0 bg-white p-5 border-t border-gray-100 flex gap-2 rounded-b-3xl">
                   <button onclick="closeSellModal()" class="flex-1 py-3 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">Cancel</button>
-                  <button onclick="confirmSell()" class="flex-1 py-3 rounded-xl bg-green-600 text-white font-semibold hover:bg-green-700 transition flex items-center justify-center gap-2"><i data-lucide="check-circle" class="w-4 h-4"></i> Confirm Sale</button>
+                  <button id="confirmSellBtn" onclick="confirmSell()" class="flex-1 py-3 rounded-xl bg-green-600 text-white font-semibold hover:bg-green-700 transition flex items-center justify-center gap-2"><i data-lucide="check-circle" class="w-4 h-4"></i> Confirm Sale</button>
               </div>
           </div>
       </div>
@@ -1810,12 +1872,12 @@
                   <button id="detailEditBtn" onclick="toggleEditMode()" class="px-5 py-2.5 rounded-xl bg-amber-100 text-amber-700 font-semibold hover:bg-amber-200 transition flex items-center gap-2"><i data-lucide="pencil" class="w-4 h-4"></i> Edit</button>
                   <button id="detailHoldBtn" onclick="holdOrderFromDetail()" class="px-5 py-2.5 rounded-xl bg-blue-100 text-blue-700 font-semibold hover:bg-blue-200 transition flex items-center gap-2"><i data-lucide="pause-circle" class="w-4 h-4"></i> Hold</button>
                   <button id="detailUnholdBtn" onclick="unholdOrderFromDetail()" class="px-5 py-2.5 rounded-xl bg-amber-100 text-amber-700 font-semibold hover:bg-amber-200 transition flex items-center gap-2" style="display:none;"><i data-lucide="play-circle" class="w-4 h-4"></i> Unhold</button>
-                  <button id="detailRevertBtn" onclick="revertSoldOrder(detailOrderId)" class="px-5 py-2.5 rounded-xl bg-amber-100 text-amber-700 font-semibold hover:bg-amber-200 transition flex items-center gap-2" style="display:none;"><i data-lucide="undo-2" class="w-4 h-4"></i> Revert Sale</button>
+                  <button id="detailRevertBtn" onclick="revertSale()" class="px-5 py-2.5 rounded-xl bg-amber-100 text-amber-700 font-semibold hover:bg-amber-200 transition flex items-center gap-2" style="display:none;"><i data-lucide="undo-2" class="w-4 h-4"></i> Revert Sale</button>
                   <button id="detailDeleteBtn" onclick="deleteOrderFromDetail()" class="px-5 py-2.5 rounded-xl bg-red-500 text-white font-semibold hover:bg-red-600 transition flex items-center gap-2"><i data-lucide="trash-2" class="w-4 h-4"></i> Delete</button>
               </div>
               <div id="detailSaveActions" style="display:none;" class="sticky bottom-0 bg-white border-t border-gray-100 p-4 flex gap-2 justify-end">
                   <button onclick="cancelEdit()" class="px-5 py-2.5 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">Cancel</button>
-                  <button onclick="saveEdit()" class="px-5 py-2.5 rounded-xl bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition flex items-center gap-2"><i data-lucide="save" class="w-4 h-4"></i> Save Changes</button>
+                  <button id="saveEditBtn" onclick="saveEdit()" class="px-5 py-2.5 rounded-xl bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition flex items-center gap-2"><i data-lucide="save" class="w-4 h-4"></i> Save Changes</button>
               </div>
           </div>
       </div>
@@ -1859,6 +1921,34 @@
                   <span id="imgViewerCaption" class="text-white/90 text-sm font-semibold"></span>
                   <a id="imgViewerDownload" href="#" download="document.jpg" class="text-xs bg-white text-gray-900 font-semibold px-3 py-1.5 rounded-full hover:bg-gray-100">⬇ Download</a>
               </div>
+          </div>
+      </div>
+
+      <!-- ================================================================ -->
+      <!-- SECTION 20.5: ADMIN AUTH GATE                                   -->
+      <!-- ================================================================ -->
+      <div id="authGate" class="auth-gate" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+          <div class="auth-card">
+              <div class="auth-brand">
+                  <div class="auth-mark">C</div>
+                  <div>
+                      <h2 id="authTitle">Cashify Admin</h2>
+                      <p>Authorised access only</p>
+                  </div>
+              </div>
+              <form id="authForm" autocomplete="off" novalidate>
+                  <div class="auth-field">
+                      <label for="authUsername">Username</label>
+                      <input id="authUsername" type="text" autocapitalize="none" autocorrect="off" spellcheck="false" required />
+                  </div>
+                  <div class="auth-field">
+                      <label for="authPassword">Password</label>
+                      <input id="authPassword" type="password" required />
+                  </div>
+                  <p class="auth-error" id="authError" role="alert" aria-live="polite"></p>
+                  <button class="auth-submit" id="authSubmit" type="submit">Sign in</button>
+              </form>
+              <p class="auth-foot">Session ends when this tab is closed.</p>
           </div>
       </div>
 
